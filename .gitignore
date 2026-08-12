@@ -1,0 +1,48 @@
+# The virtual environment. Recreate with:
+#     python3 -m venv --copies venv
+#     venv/bin/pip install -r requirements.txt
+venv/
+.venv/
+env/
+
+# Python bytecode and build leftovers
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Editor and tooling state, which is local to one machine
+.claude/
+.vscode/
+.idea/
+*.swp
+*~
+
+# Reference spectrograms are deliberately NOT distributed. They are pictures of
+# real recordings, and turning such pictures back into audio is precisely what
+# this program does, so publishing them would publish the sound. The colour
+# tables derived from them are committed instead - those are gradients, and
+# carry nothing of the recording. See testing-files/README.md.
+testing-files/*.png
+testing-files/*.jpg
+testing-files/*.jpeg
+testing-files/*.bmp
+testing-files/*.webp
+testing-files/*.tif
+testing-files/*.tiff
+
+# Audio this program writes
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+
+# Generated at runtime rather than checked in
+learned_colormaps.npz
+presets.json
+
+# OS clutter
+.DS_Store
+Thumbs.db
