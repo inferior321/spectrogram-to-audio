@@ -266,18 +266,30 @@ class ImageView(QLabel):
 
     # -- content -----------------------------------------------------------
 
-    def set_array(self, rgb: np.ndarray | None) -> None:
+    def set_array(self, rgb: np.ndarray | None, *, keep_view: bool = False) -> None:
+        """Show `rgb`. `keep_view` holds the current zoom and pan in place.
+
+        Adjusting a crop replaces the picture on every slider step, and
+        resetting the view each time would make it impossible to zoom in on an
+        edge and trim it - which is exactly when the zoom is wanted.
+        """
         if rgb is None:
             self._pixmap = None
             self.setText("No image loaded\n\nOpen an image, or drag one here")
             self.update()
             return
+        had = self._pixmap is not None
         arr = np.ascontiguousarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
         h, w, _ = arr.shape
         img = QImage(arr.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
         self._pixmap = QPixmap.fromImage(img)
         self.setText("")
-        self.reset_view()
+        if keep_view and had:
+            self._clamp()               # the new size may bring the pan in range
+            self.update()
+            self.viewChanged.emit()
+        else:
+            self.reset_view()
 
     def reset_view(self) -> None:
         self._zoom = 1.0

@@ -111,21 +111,36 @@ def apply_orientation(rgb: np.ndarray, st: Settings) -> np.ndarray:
     return rgb
 
 
+def crop_box(height: int, width: int, st: Settings) -> tuple[int, int, int, int]:
+    """The crop actually applied, as (top, bottom, left, right).
+
+    Clamped so at least one row and one column always survive: opposing crops
+    that would meet in the middle - or exceed the image entirely - give an
+    empty array, and every stage downstream would divide by its size. The
+    display and the conversion both call this, so what you see cropped on
+    screen is exactly the pixels that get turned into sound.
+    """
+    t = max(0, min(int(st.crop_top), height - 1))
+    b = max(0, min(int(st.crop_bottom), height - 1 - t))
+    l = max(0, min(int(st.crop_left), width - 1))
+    r = max(0, min(int(st.crop_right), width - 1 - l))
+    return t, b, l, r
+
+
+def crop_view(rgb: np.ndarray, st: Settings) -> np.ndarray:
+    """`rgb` with the crop applied. A view, not a copy."""
+    h, w = rgb.shape[0], rgb.shape[1]
+    t, b, l, r = crop_box(h, w, st)
+    return rgb[t : h - b, l : w - r]
+
+
 def to_level(rgb: np.ndarray, st: Settings) -> np.ndarray:
     """Collapse RGB to a single 0..1 'how loud was this pixel' image.
 
     Returns an array whose row 0 is the LOWEST frequency (image already
     flipped) and where 1.0 always means loud, regardless of the colour scheme.
     """
-    h, w, _ = rgb.shape
-    t, b = int(st.crop_top), int(st.crop_bottom)
-    l, r = int(st.crop_left), int(st.crop_right)
-    # Guard against crops that would leave nothing behind.
-    t = max(0, min(t, h - 1))
-    b = max(0, min(b, h - 1 - t))
-    l = max(0, min(l, w - 1))
-    r = max(0, min(r, w - 1 - l))
-    view = rgb[t : h - b, l : w - r, :]
+    view = crop_view(rgb, st)
 
     # Optional time window, used by the preview so a few seconds can be tried
     # without waiting for the whole image.

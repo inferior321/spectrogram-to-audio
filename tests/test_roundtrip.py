@@ -1084,6 +1084,100 @@ def test_ffmpeg_sources_are_calibrated() -> None:
     check("every ffmpeg mode was checked", seen >= 10, f"{seen} modes")
 
 
+def test_crop_preview() -> None:
+    """The picture on screen must be the pixels that get converted.
+
+    Crop used to be invisible: the sliders were connected to nothing, so the
+    preview showed the whole image however much was trimmed, and there was no
+    way to see whether a border had actually been removed.
+    """
+    print("\nCrop preview")
+    from spectro.settings import Settings
+
+    # The clamp: opposing crops must never leave an empty array, whatever is
+    # asked for. Every stage downstream divides by the size.
+    for ct, cb, cl, cr in ((0, 0, 0, 0), (5, 5, 7, 3), (60, 60, 0, 0),
+                           (999, 999, 999, 999), (-4, -4, -4, -4),
+                           (49, 50, 0, 0), (0, 0, 79, 80)):
+        st = Settings()
+        st.crop_top, st.crop_bottom = ct, cb
+        st.crop_left, st.crop_right = cl, cr
+        rgb = np.zeros((50, 80, 3), dtype=np.float32)
+        view = core.crop_view(rgb, st)
+        ok = view.shape[0] >= 1 and view.shape[1] >= 1 and view.size > 0
+        check(f"crop t{ct} b{cb} l{cl} r{cr} leaves something",
+              ok, f"{view.shape[1]} x {view.shape[0]}")
+
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PyQt6.QtWidgets import QApplication
+        from spectro.gui import MainWindow
+    except Exception as exc:                       # pragma: no cover
+        print(f"  SKIP - no Qt ({exc})")
+        return
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    try:
+        rng = np.random.default_rng(3)
+        win.raw_rgb = rng.random((120, 200, 3)).astype(np.float32)
+        win.rgb = win.raw_rgb.copy()
+        win._show_cropped()
+        check("uncropped preview is the whole image",
+              win.image_view._pixmap.width() == 200
+              and win.image_view._pixmap.height() == 120,
+              f"{win.image_view._pixmap.width()} x {win.image_view._pixmap.height()}")
+
+        # Drive the spin boxes, which is what a user edit actually moves:
+        # set_value() guards its signals on purpose, so it proves nothing here.
+        win.sld_crop_l.spin.setValue(20); win.sld_crop_r.spin.setValue(10)
+        win.sld_crop_t.spin.setValue(5);  win.sld_crop_b.spin.setValue(15)
+        check("the preview shrank to the cropped size",
+              win.image_view._pixmap.width() == 170
+              and win.image_view._pixmap.height() == 100,
+              f"{win.image_view._pixmap.width()} x {win.image_view._pixmap.height()}")
+
+        # It must be the RIGHT pixels, not merely the right size.
+        shown = win.cropped_rgb()
+        check("the preview shows the correct region",
+              np.array_equal(shown, win.raw_rgb[5:105, 20:190]))
+
+        # And the conversion must read exactly what is displayed.
+        lvl = core.to_level(win.rgb, win.current_settings())
+        check("the conversion reads the same region",
+              lvl.shape[1] == shown.shape[1] and lvl.shape[0] == shown.shape[0],
+              f"level {lvl.shape[1]} x {lvl.shape[0]} vs shown "
+              f"{shown.shape[1]} x {shown.shape[0]}")
+
+        # Zoom must survive a crop change, or trimming an edge zoomed in is
+        # impossible - which is when the zoom is most wanted.
+        win.image_view.zoom_by(4.0)
+        z = win.image_view.zoom_level()
+        win.sld_crop_l.set_value(25)
+        check("zoom survives a crop change",
+              abs(win.image_view.zoom_level() - z) < 1e-9,
+              f"{z} -> {win.image_view.zoom_level()}")
+
+        # Reset sets the sliders from code, and SliderSpin.set_value suppresses
+        # valueChanged - so the picture has to be refreshed explicitly or it
+        # keeps showing the crop that was just cleared.
+        win.reset_defaults()
+        check("Reset restores the full picture",
+              win.image_view._pixmap.width() == 200
+              and win.image_view._pixmap.height() == 120,
+              f"{win.image_view._pixmap.width()} x {win.image_view._pixmap.height()}")
+
+        # Loading a fresh image should still reset the view.
+        win.image_view.zoom_by(3.0)
+        win.image_view.set_array(win.raw_rgb)
+        check("a new image resets the zoom",
+              abs(win.image_view.zoom_level() - 1.0) < 1e-9,
+              f"zoom {win.image_view.zoom_level()}")
+    finally:
+        win.close()
+        app.processEvents()
+
+
 def test_text_is_readable() -> None:
     """Every label must contrast with the background it sits on.
 
@@ -1307,6 +1401,7 @@ def main() -> int:
     test_zoom_and_pan(tmp / 'gui')
     test_preview_replaces_playback()
     test_calibration_names_the_right_ends()
+    test_crop_preview()
     test_readouts_agree_about_dbfs()
     test_ffmpeg_sources_are_calibrated()
     test_text_is_readable()

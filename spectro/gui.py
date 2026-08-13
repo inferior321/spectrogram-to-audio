@@ -310,10 +310,16 @@ class MainWindow(QMainWindow):
         self.sld_crop_r = SliderSpin(0, 400, 0, 1, 0, " px")
         self.sld_crop_t = SliderSpin(0, 400, 0, 1, 0, " px")
         self.sld_crop_b = SliderSpin(0, 400, 0, 1, 0, " px")
-        s.add_row("Crop left:", self.sld_crop_l, "Trim axis labels, rulers or borders.")
+        s.add_row("Crop left:", self.sld_crop_l,
+                  "Trim axis labels, rulers or borders. The picture above "
+                  "updates as you drag, so it always shows the pixels that "
+                  "will be turned into sound.")
         s.add_row("Crop right:", self.sld_crop_r)
         s.add_row("Crop top:", self.sld_crop_t)
         s.add_row("Crop bottom:", self.sld_crop_b)
+        for sld in (self.sld_crop_l, self.sld_crop_r,
+                    self.sld_crop_t, self.sld_crop_b):
+            sld.valueChanged.connect(self._on_crop_changed)
         lay.addWidget(s)
         self.sec_source = s
 
@@ -724,6 +730,11 @@ class MainWindow(QMainWindow):
         self.cmb_format.setCurrentText(st.output_format)
         self.cmb_bitrate.setCurrentText(str(st.mp3_bitrate_kbps))
         self.cmb_depth.setCurrentText(st.bit_depth)
+        # SliderSpin.set_value deliberately suppresses valueChanged, so setting
+        # the crop from code - Reset, most obviously - never reaches
+        # _on_crop_changed. Refresh the picture here instead of leaving it
+        # showing the crop that was just replaced.
+        self._show_cropped(keep_view=True)
         self._update_readouts()
 
     def _apply_quality(self, *_: object) -> None:
@@ -796,7 +807,10 @@ class MainWindow(QMainWindow):
                 f"Brightness is used directly, {quiet} through {loud}; "
                 "Gain and Range are ignored.")
 
-        full = self.rgb.shape[1] - st.crop_left - st.crop_right if self.rgb is not None else 0
+        # Take the size from the clamped crop, so these lines agree with the
+        # picture on screen even while a slider is being dragged past the edge.
+        view = self.cropped_rgb()
+        full = view.shape[1] if view is not None else 0
         if full > 0:
             frac = core.preview_fraction(st)
             width = max(4, int(round(full * frac)))
@@ -811,7 +825,7 @@ class MainWindow(QMainWindow):
             self.lbl_time.setText("Load an image to see the resulting length.")
 
         bins = st.n_fft // 2 + 1
-        rows = (self.rgb.shape[0] - st.crop_top - st.crop_bottom) if self.rgb is not None else 0
+        rows = view.shape[0] if view is not None else 0
         if rows:
             ratio = bins / max(1, rows)
             if 0.7 <= ratio <= 1.6:
@@ -862,7 +876,7 @@ class MainWindow(QMainWindow):
         self.rgb = core.apply_orientation(self.raw_rgb, self.current_settings())
         self.image_path = path
         h, w, _ = self.rgb.shape
-        self.image_view.set_array(self.rgb)
+        self._show_cropped()
         self.lbl_file.setText(f"{path.name}  ({w} × {h})")
         # Crop can never exceed a quarter of the image, so the sliders are
         # rescaled to the image that is actually loaded.
@@ -894,10 +908,16 @@ class MainWindow(QMainWindow):
         self.log("Settings reset to the Audacity dialog defaults.", "good")
 
     def _on_hover(self, x: float, y: float) -> None:
-        if self.rgb is None:
+        view = self.cropped_rgb()
+        if view is None:
             return
         st = self.current_settings()
-        h, w, _ = self.rgb.shape
+        # The cropped picture is what is on screen, so the pointer position is
+        # a fraction of THAT - not of the original image. This also makes the
+        # readout right: the conversion maps the cropped rows onto the
+        # frequency range, so reading off the uncropped height was wrong by
+        # however much had been trimmed.
+        h, w, _ = view.shape
         # y comes in top-down; the frequency axis runs bottom-up.
         unit = 1.0 - y
         lo, hi = core._scale_forward(np.array([st.min_freq, st.max_freq]), st.freq_scale)
@@ -905,10 +925,9 @@ class MainWindow(QMainWindow):
         grid = np.linspace(max(st.min_freq, 1e-3), st.max_freq, 4096)
         freq = float(np.interp(target, core._scale_forward(grid, st.freq_scale), grid))
 
-        width = w - st.crop_left - st.crop_right
-        frames = core.infer_frame_count(max(1, width), st)
+        frames = core.infer_frame_count(max(1, w), st)
         t = x * core.frames_to_duration(frames, st)
-        px = self.rgb[min(h - 1, int(y * h)), min(w - 1, int(x * w))]
+        px = view[min(h - 1, int(y * h)), min(w - 1, int(x * w))]
         lvl = float(colormap.level_from_scheme(px.reshape(1, 1, 3), st.color_scheme)[0, 0])
         if st.flip_polarity:
             lvl = 1.0 - lvl
@@ -975,7 +994,7 @@ class MainWindow(QMainWindow):
             return
         self.rgb = core.apply_orientation(self.raw_rgb, self.current_settings())
         h, w, _ = self.rgb.shape
-        self.image_view.set_array(self.rgb)
+        self._show_cropped()
         self.image_view.set_selection(None)
         for sld in (self.sld_crop_l, self.sld_crop_r):
             sld.set_limits(0, max(1, w // 4))
@@ -987,13 +1006,37 @@ class MainWindow(QMainWindow):
                  f"now reading {w} × {h}.")
         self._update_readouts()
 
+    def cropped_rgb(self) -> np.ndarray | None:
+        """The pixels the conversion will actually read, crop applied.
+
+        `self.rgb` stays the whole oriented image so the crop stays adjustable
+        in both directions; everything that asks 'what is being converted?'
+        comes through here instead.
+        """
+        if self.rgb is None:
+            return None
+        return core.crop_view(self.rgb, self.current_settings())
+
+    def _show_cropped(self, *, keep_view: bool = False) -> None:
+        """Put the cropped picture on screen."""
+        view = self.cropped_rgb()
+        if view is None:
+            return
+        self.image_view.set_array(view, keep_view=keep_view)
+
+    def _on_crop_changed(self, _value: float = 0.0) -> None:
+        # Keep the zoom: trimming an edge is usually done zoomed in on it.
+        self._show_cropped(keep_view=True)
+        self._update_readouts()
+
     def _on_region(self, start: float, end: float) -> None:
         self._update_readouts()
         if self.image_view.selection() is None:
             self.log("Region cleared - Convert will use the whole image.")
         else:
             st = self.current_settings()
-            width = self.rgb.shape[1] if self.rgb is not None else 0
+            view = self.cropped_rgb()
+            width = view.shape[1] if view is not None else 0
             secs = core.frames_to_duration(
                 core.infer_frame_count(max(4, int(width * (end - start))), st), st)
             self.log(f"Region {start * 100:.0f}%-{end * 100:.0f}% selected "
