@@ -145,6 +145,17 @@ class Section(QWidget):
         lay.addWidget(self.body)
         self._row = 0
 
+    def set_body_enabled(self, enabled: bool) -> None:
+        """Grey out the controls but leave the heading usable.
+
+        Disabling the whole Section would take the fold button with it, so a
+        section that is not yet applicable could not even be collapsed out of
+        the way. Each child keeps its own enabled flag, so anything separately
+        disabled - the channel picker on a colour scheme that has no channels -
+        stays disabled when the section comes back.
+        """
+        self.body.setEnabled(enabled)
+
     def _toggle(self, checked: bool) -> None:
         self.body.setVisible(checked)
         self._button.setArrowType(

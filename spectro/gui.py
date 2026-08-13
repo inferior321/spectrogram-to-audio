@@ -106,6 +106,9 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self.apply_settings(Settings())
+        # Nothing loaded yet, so the sections that describe the picture have
+        # nothing to describe. load_image turns them back on.
+        self._set_image_controls_enabled(False)
         self.log("Ready. Open a spectrogram image to begin.")
         if not self.player.available:
             self.log(f"Playback unavailable ({self.player.error}). "
@@ -886,6 +889,7 @@ class MainWindow(QMainWindow):
             sld.set_limits(0, max(1, h // 4))
         self.btn_convert.setEnabled(True)
         self.btn_preview.setEnabled(True)
+        self._set_image_controls_enabled(True)
         self.image_view.set_selection(None)
         self.log(f"Loaded {path.name} — {w} × {h} pixels. "
                  f"Reading it as: {self._current_scheme}.", "good")
@@ -1005,6 +1009,21 @@ class MainWindow(QMainWindow):
         self.log(f"Layout set to {self.cmb_orientation.currentText()} — "
                  f"now reading {w} × {h}.")
         self._update_readouts()
+
+    def _set_image_controls_enabled(self, enabled: bool) -> None:
+        """Grey out the settings that describe a picture until there is one.
+
+        Source image, Frequency axis and Levels all answer questions ABOUT the
+        loaded file - which gradient drew it, what its axis spans, how bright
+        means how loud - and none of them can be answered before it is opened.
+        The crop sliders are the clearest case: their range is a quarter of the
+        image, so with nothing loaded they offered a meaningless 0-400.
+
+        Analysis, Time, Phase, Denoise and Output stay live throughout, because
+        those are output preferences worth setting up before loading anything.
+        """
+        for sec in (self.sec_source, self.sec_freq, self.sec_level):
+            sec.set_body_enabled(enabled)
 
     def cropped_rgb(self) -> np.ndarray | None:
         """The pixels the conversion will actually read, crop applied.

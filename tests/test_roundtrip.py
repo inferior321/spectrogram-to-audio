@@ -1178,6 +1178,71 @@ def test_crop_preview() -> None:
         app.processEvents()
 
 
+def test_image_controls_wait_for_an_image() -> None:
+    """Settings that describe the picture stay greyed out until there is one.
+
+    The crop sliders were the giveaway: their range is a quarter of the image,
+    so with nothing loaded they offered a meaningless 0-400 and moving them did
+    nothing anyone could see. Output preferences stay live throughout - format,
+    quality and sample rate are worth setting before loading anything.
+    """
+    print("\nControls gated on a loaded image")
+    import os
+    import tempfile
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PyQt6.QtWidgets import QApplication
+        from spectro.gui import MainWindow
+    except Exception as exc:                       # pragma: no cover
+        print(f"  SKIP - no Qt ({exc})")
+        return
+
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    # isEnabled() reports the EFFECTIVE state, so a disabled section shows up
+    # on every control inside it.
+    gated = {"Came from": win.cmb_source, "Layout": win.cmb_orientation,
+             "Flip polarity": win.chk_flip, "Crop left": win.sld_crop_l,
+             "Crop bottom": win.sld_crop_b, "Scale": win.cmb_scale,
+             "Min frequency": win.sld_fmin, "Max frequency": win.sld_fmax,
+             "Mapping": win.cmb_mapping, "Gain": win.sld_gain,
+             "Range": win.sld_range, "Noise gate": win.sld_gate}
+    live = {"Window size": win.cmb_window_size, "Overlap": win.cmb_overlap,
+            "Sample rate": win.cmb_rate, "Duration": win.edit_duration,
+            "Quality": win.cmb_quality, "Iterations": win.sld_iters,
+            "Reduce background": win.sld_denoise, "Format": win.cmb_format,
+            "Fade in/out": win.sld_fade}
+    try:
+        for name, wdg in gated.items():
+            check(f"{name} is disabled before an image", not wdg.isEnabled())
+        for name, wdg in live.items():
+            check(f"{name} stays usable before an image", wdg.isEnabled())
+        check("Convert is disabled before an image", not win.btn_convert.isEnabled())
+
+        # Reset must not switch them on - there is still no image.
+        win.reset_defaults()
+        check("Reset does not enable them while nothing is loaded",
+              not win.sld_crop_l.isEnabled() and not win.cmb_source.isEnabled())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "probe.png"
+            rng = np.random.default_rng(11)
+            arr = (rng.random((64, 96, 3)) * 255).astype(np.uint8)
+            Image.fromarray(arr).save(path)
+            win.load_image(path)
+
+        for name, wdg in gated.items():
+            check(f"{name} is enabled once an image is loaded", wdg.isEnabled())
+        check("Convert is enabled once an image is loaded", win.btn_convert.isEnabled())
+        # Crop ranges are now the image's, not the placeholder 0-400.
+        check("crop sliders re-range to the image",
+              win.sld_crop_l._max == 96 // 4 and win.sld_crop_t._max == 64 // 4,
+              f"left max {win.sld_crop_l._max}, top max {win.sld_crop_t._max}")
+    finally:
+        win.close()
+        app.processEvents()
+
+
 def test_text_is_readable() -> None:
     """Every label must contrast with the background it sits on.
 
@@ -1211,7 +1276,13 @@ def test_text_is_readable() -> None:
         for label in win.findChildren(QLabel):
             if isinstance(label, ImageView):
                 continue          # paints its own dark background
-            colour = label.palette().color(label.foregroundRole())
+            # Ask for the ACTIVE group explicitly. Sections that describe the
+            # picture start disabled, and a disabled control is meant to be
+            # dim - measuring its greyed colour would fail the test for doing
+            # exactly the right thing. What matters is that the text is
+            # readable when the control is usable.
+            colour = label.palette().color(QPalette.ColorGroup.Active,
+                                           label.foregroundRole())
             contrast = abs(lum(colour) - background)
             if contrast < worst[1]:
                 worst = (label.objectName() or (label.text()[:30] or "<blank>"), contrast)
@@ -1402,6 +1473,7 @@ def main() -> int:
     test_preview_replaces_playback()
     test_calibration_names_the_right_ends()
     test_crop_preview()
+    test_image_controls_wait_for_an_image()
     test_readouts_agree_about_dbfs()
     test_ffmpeg_sources_are_calibrated()
     test_text_is_readable()
