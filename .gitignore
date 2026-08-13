@@ -19,11 +19,17 @@ dist/
 *.swp
 *~
 
-# Reference spectrograms are deliberately NOT distributed. They are pictures of
-# real recordings, and turning such pictures back into audio is precisely what
-# this program does, so publishing them would publish the sound. The colour
-# tables derived from them are committed instead - those are gradients, and
-# carry nothing of the recording. See testing-files/README.md.
+# Spectrograms are deliberately NOT distributed. They are pictures of real
+# recordings, and turning such pictures back into audio is precisely what this
+# program does, so publishing one publishes the sound. The colour tables
+# derived from them are committed instead - those are gradients, and carry
+# nothing of the recording. See testing-files/README.md.
+#
+# Matched ANYWHERE, not just in testing-files/: a 72 MB export once landed in
+# the project root and went straight past a testing-files-only rule into a
+# public repository.
+*_spectrogram.png
+*_spectrogram*.png
 testing-files/*.png
 testing-files/*.jpg
 testing-files/*.jpeg
@@ -31,6 +37,16 @@ testing-files/*.bmp
 testing-files/*.webp
 testing-files/*.tif
 testing-files/*.tiff
+
+# Loose images dropped in the project root while testing. The program's own
+# outputs and screenshots live in docs/, which is not covered by this.
+/*.png
+/*.jpg
+/*.jpeg
+/*.bmp
+/*.webp
+/*.tif
+/*.tiff
 
 # Audio this program writes
 *.wav

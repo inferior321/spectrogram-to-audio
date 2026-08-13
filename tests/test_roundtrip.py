@@ -928,6 +928,49 @@ def test_preview_replaces_playback() -> None:
         app.processEvents()
 
 
+def test_bin_ratio_advice() -> None:
+    """A mismatched FFT must name the setting that fixes it.
+
+    The window size is set by the image's HEIGHT - the transform is twice the
+    frequency axis - and it is natural to reach for the width instead, which on
+    a 32768x2048 export is sixteen times too big. The readout used to answer
+    every mismatch with "try a smaller zero padding", which says nothing when
+    the padding is already 1 and the window is what is wrong.
+    """
+    print("\nBin-ratio advice")
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PyQt6.QtWidgets import QApplication
+        from spectro.gui import MainWindow
+    except Exception as exc:                       # pragma: no cover
+        print(f"  SKIP - no Qt available ({exc})")
+        return
+
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    try:
+        # A 2048-row image wants an FFT of 4096.
+        win.rgb = np.zeros((2048, 4000, 3), dtype=np.float32)
+        for size, padding, want in (("4096", "1", "well matched"),
+                                    ("2048", "2", "well matched"),
+                                    ("32768", "1", "try window 4096"),
+                                    ("32768", "2", "try window 2048"),
+                                    ("512", "1", "try window 4096")):
+            win.cmb_window_size.setCurrentText(size)
+            win.cmb_padding.setCurrentText(padding)
+            text = win.lbl_bins.text()
+            check(f"window {size} padding {padding} -> '{want}'", want in text, text)
+
+        win.cmb_window_size.setCurrentText("32768")
+        win.cmb_padding.setCurrentText("1")
+        check("it no longer blames the padding when padding is 1",
+              "zero padding" not in win.lbl_bins.text(), win.lbl_bins.text())
+    finally:
+        win.close()
+        app.processEvents()
+
+
 def test_gui_source_selection() -> None:
     """The dropdown must set the scheme, and loading must not override it."""
     print("\nGUI source selection")
@@ -1099,6 +1142,7 @@ def main() -> int:
     test_window_does_not_grow(tmp / 'gui')
     test_zoom_and_pan(tmp / 'gui')
     test_preview_replaces_playback()
+    test_bin_ratio_advice()
     test_gui_source_selection()
     test_roundtrip()
     print("\n" + ("ALL PASSED" if not FAILURES else f"FAILED: {FAILURES}"))

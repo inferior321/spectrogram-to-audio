@@ -420,6 +420,25 @@ invented detail. The window reports this live and calls it *too coarse*,
 `65536x2048` are there for this — or tick **Split into chunks** and convert the
 pieces.
 
+**Window size comes from the picture's HEIGHT, never its width.** This is the
+easy mistake: exporting at `32768x2048` and then setting Window size to 32768.
+The width is time columns and this program works those out for itself from the
+duration; the height is the frequency axis, and the FFT is twice it. A
+2048-pixel-tall image wants **window 4096, padding 1** whether it is 4096 or
+65536 wide. Measured against the original audio on a 32768x2048 export:
+
+| window × padding | error vs the original audio |
+|---|---|
+| **4096 × 1** | **1.27 dB** |
+| 2048 × 2 | 3.21 dB |
+| 16384 × 1 | 2.49 dB |
+| 32768 × 1 | 5.99 dB |
+
+Note that 2048 × 2 gives the same FFT size of 4096 and still measures worse:
+the window *length* matters as well, and ffmpeg used a 4096-sample one. The
+rows-to-bins line under the FFT settings names the window to use when they do
+not match.
+
 **The frequency axis sets the FFT size**, exactly and without rounding: the
 transform is twice the frequency axis in pixels, so 2048 px means FFT 4096 and
 1080 px means FFT 2160. Sizes whose frequency axis is a power of two can be

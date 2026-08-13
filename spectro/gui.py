@@ -737,6 +737,22 @@ class MainWindow(QMainWindow):
         if any(actual.get(k) != v for k, v in wanted.items()):
             self.cmb_quality.setCurrentText("Custom")
 
+    @staticmethod
+    def _suggest_window(rows: int, st: Settings) -> str:
+        """Which window size and padding would match this many image rows.
+
+        The transform wants about 2 bins per row, so n_fft = 2 * rows.  The
+        window carries that, and the padding only multiplies it, so the padding
+        is left alone and the window is rounded to the nearest power of two
+        that gets there.
+        """
+        target = max(64, 2 * rows)
+        window = max(64, min(32768, target // max(1, st.zero_padding)))
+        window = 1 << max(6, min(15, round(window).bit_length() - 1))
+        if st.zero_padding != 1 and window * st.zero_padding != target:
+            return f"window {2 * rows} with padding 1"
+        return f"window {window}"
+
     def _update_readouts(self, *_: object) -> None:
         st = self.current_settings()
 
@@ -771,9 +787,19 @@ class MainWindow(QMainWindow):
         rows = (self.rgb.shape[0] - st.crop_top - st.crop_bottom) if self.rgb is not None else 0
         if rows:
             ratio = bins / max(1, rows)
-            note = ("well matched" if 0.7 <= ratio <= 1.6 else
-                    "mostly interpolation - try a smaller zero padding" if ratio > 1.6
-                    else "coarser than the image - detail is being discarded")
+            if 0.7 <= ratio <= 1.6:
+                note = "well matched"
+            else:
+                # Name the setting that actually fixes it.  This used to say
+                # "try a smaller zero padding" whatever was wrong, which is
+                # useless advice when the padding is already 1 and the window
+                # is the thing that is out - the common mistake, because the
+                # window size is set by the image's HEIGHT and it is natural to
+                # reach for its width.
+                want = self._suggest_window(rows, st)
+                trouble = ("mostly interpolation" if ratio > 1.6
+                           else "coarser than the image, detail discarded")
+                note = f"{trouble} - try {want}"
             self.lbl_bins.setText(f"{rows} image rows -> {bins} FFT bins "
                                   f"({ratio:.1f}x, {note}).")
         else:
