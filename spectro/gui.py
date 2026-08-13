@@ -397,15 +397,19 @@ class MainWindow(QMainWindow):
         self.cmb_rate = QComboBox()
         self.cmb_rate.setEditable(True)
         self.cmb_rate.addItems(["8000", "16000", "22050", "32000", "44100", "48000", "96000"])
-        s.add_row("Sample rate:", self.cmb_rate, "Hz")
+        s.add_row("Sample rate:", self.cmb_rate,
+                  "Hz. This is the tape-speed knob: it moves pitch and length "
+                  "together. Match the audio the picture was made from.")
         self.edit_duration = QLineEdit()
         self.edit_duration.setPlaceholderText("blank = infer from image width  (m:ss or seconds)")
         s.add_row("Duration:", self.edit_duration,
                   "Type 1:23.5, or 83.5, or leave blank to let the program guess.")
         self.sld_stretch = SliderSpin(0.10, 4.00, 1.00, 0.01, 2, "×")
         s.add_row("Time stretch:", self.sld_stretch,
-                  "By-ear speed control. Multiplies the duration above; also "
-                  "shifts pitch, exactly like changing tape speed.")
+                  "By-ear speed control, and the same knob as Duration: it "
+                  "multiplies whatever the duration would otherwise be, so 6 s "
+                  "at 2× is the 12 s render exactly. Pitch does not move — "
+                  "only Sample rate does that.")
         self.lbl_time = QLabel()
         self.lbl_time.setWordWrap(True)
         self.lbl_time.setStyleSheet("font-size: 11px;")
