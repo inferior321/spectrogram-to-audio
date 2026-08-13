@@ -1235,12 +1235,97 @@ def test_image_controls_wait_for_an_image() -> None:
             check(f"{name} is enabled once an image is loaded", wdg.isEnabled())
         check("Convert is enabled once an image is loaded", win.btn_convert.isEnabled())
         # Crop ranges are now the image's, not the placeholder 0-400.
+        from spectro.gui import _crop_limit
         check("crop sliders re-range to the image",
-              win.sld_crop_l._max == 96 // 4 and win.sld_crop_t._max == 64 // 4,
-              f"left max {win.sld_crop_l._max}, top max {win.sld_crop_t._max}")
+              win.sld_crop_l._max == _crop_limit(96)
+              and win.sld_crop_t._max == _crop_limit(64),
+              f"left max {win.sld_crop_l._max} (want {_crop_limit(96)}), "
+              f"top max {win.sld_crop_t._max} (want {_crop_limit(64)})")
     finally:
         win.close()
         app.processEvents()
+
+
+def test_pitch() -> None:
+    """Pitch must scale the frequency axis exactly and leave the length alone.
+
+    The shift happens in build_magnitude, before phase reconstruction, so it is
+    deterministic and can be checked exactly - measuring the finished audio
+    instead would be reading Griffin-Lim's noise.
+    """
+    print("\nPitch")
+    h, w = 2000, 260
+
+    def built_centroid(pitch: float, drawn: float) -> float:
+        st = Settings()
+        st.min_freq, st.max_freq = 0.0, 22050.0
+        st.pitch = pitch
+        u = core.freq_to_unit(np.array([drawn]), st.min_freq, st.max_freq,
+                              st.freq_scale)[0]
+        row = int(round((1.0 - u) * (h - 1)))
+        # Audacity Grayscale: the white page is silence, the black line is loud.
+        rgb = np.ones((h, w, 3), dtype=np.float32)
+        rgb[row - 1:row + 2] = 0.0
+        mag = core.build_magnitude(core.to_level(rgb, st), st)
+        freqs = np.fft.rfftfreq(st.n_fft, 1.0 / st.sample_rate)
+        prof = mag.mean(axis=1)
+        return float(np.sum(freqs * prof) / np.sum(prof))
+
+    for pitch in (0.50, 0.75, 1.00, 1.25, 1.50, 2.00):
+        got, want = built_centroid(pitch, 3000.0), 3000.0 * pitch
+        check(f"{pitch:.2f}x puts 3000 Hz at {want:.0f} Hz",
+              abs(got - want) / want < 0.01, f"got {got:.1f} Hz")
+
+    # The whole axis has to move, not one favoured line.
+    for drawn in (500.0, 8000.0):
+        got, want = built_centroid(2.0, drawn), 2.0 * drawn
+        check(f"2.00x moves {drawn:.0f} Hz to {want:.0f} Hz",
+              abs(got - want) / want < 0.01, f"got {got:.1f} Hz")
+
+    # Length must not move: that is what separates this from Sample rate.
+    rng = np.random.default_rng(5)
+    rgb = rng.random((128, 300, 3)).astype(np.float32)
+    lengths = []
+    for pitch in (0.5, 1.0, 2.0):
+        st = Settings()
+        st.pitch, st.gl_iterations, st.duration_s = pitch, 3, 4.0
+        lengths.append(len(core.convert(core.to_level(rgb, st), st).audio))
+    check("pitch does not change the length", len(set(lengths)) == 1,
+          f"lengths {lengths}")
+
+    # 1.0 must be a true no-op, not merely close.
+    st_a, st_b = Settings(), Settings()
+    st_b.pitch = 1.0
+    a = core.build_magnitude(core.to_level(rgb, st_a), st_a)
+    b = core.build_magnitude(core.to_level(rgb, st_b), st_b)
+    check("pitch 1.0 changes nothing at all", np.array_equal(a, b))
+
+    # A nonsense value must not divide by zero or invert the axis.
+    for bad in (0.0, -1.0):
+        st = Settings()
+        st.pitch = bad
+        out = core.build_magnitude(core.to_level(rgb, st), st)
+        check(f"pitch {bad} falls back to 1.0",
+              np.array_equal(out, a), "differs from unpitched")
+
+
+def test_crop_limit() -> None:
+    """One crop slider must reach at least 100 px where the image allows.
+
+    A quarter of the image capped a 288-pixel-tall matplotlib figure at 72,
+    which is not far enough to trim past a legend.
+    """
+    print("\nCrop slider range")
+    from spectro.gui import _crop_limit
+
+    for size, want in ((288, 100), (432, 108), (2048, 512), (200, 100)):
+        got = _crop_limit(size)
+        check(f"a {size} px side allows {want} px", got == want, f"got {got}")
+    # Tiny images must still leave something behind.
+    for size in (1, 2, 5, 50):
+        got = _crop_limit(size)
+        check(f"a {size} px side stays under the image", 1 <= got <= max(1, size - 1),
+              f"limit {got}")
 
 
 def test_text_is_readable() -> None:
@@ -1473,6 +1558,8 @@ def main() -> int:
     test_preview_replaces_playback()
     test_calibration_names_the_right_ends()
     test_crop_preview()
+    test_pitch()
+    test_crop_limit()
     test_image_controls_wait_for_an_image()
     test_readouts_agree_about_dbfs()
     test_ffmpeg_sources_are_calibrated()

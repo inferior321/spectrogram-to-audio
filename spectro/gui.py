@@ -47,6 +47,19 @@ def parse_duration(text: str) -> float:
         return 0.0
 
 
+def _crop_limit(size: int) -> int:
+    """How far one crop slider may travel on an image `size` pixels across.
+
+    A quarter of the image was too mean on small exports - a 288-pixel-tall
+    matplotlib figure capped at 72, which is not enough to reach past a legend.
+    Allow a flat 100 px, or a quarter when that is larger, and never more than
+    size - 1 so a single slider cannot ask for the whole image. Opposing
+    sliders can still overrun each other; core.crop_box is what guarantees a
+    row and a column always survive.
+    """
+    return max(1, min(size - 1, max(100, size // 4)))
+
+
 def format_duration(seconds: float) -> str:
     if seconds <= 0:
         return ""
@@ -419,6 +432,15 @@ class MainWindow(QMainWindow):
                   "multiplies whatever the duration would otherwise be, so 6 s "
                   "at 2× is the 12 s render exactly. Pitch does not move — "
                   "only Sample rate does that.")
+        self.sld_pitch = SliderSpin(0.50, 2.00, 1.00, 0.01, 2, "×")
+        s.add_row("Pitch:", self.sld_pitch,
+                  "Correction for when the result comes out sharp or flat. "
+                  "Applied to the image before the sound is built, so it adds "
+                  "no artifacts and does NOT change the length. 1.00× is off.")
+        self.lbl_pitch = QLabel()
+        self.lbl_pitch.setWordWrap(True)
+        self.lbl_pitch.setStyleSheet("font-size: 11px;")
+        s.add_wide(self.lbl_pitch)
         self.lbl_time = QLabel()
         self.lbl_time.setWordWrap(True)
         self.lbl_time.setStyleSheet("font-size: 11px;")
@@ -508,7 +530,7 @@ class MainWindow(QMainWindow):
         # Live readouts.
         for w in (self.sld_gain, self.sld_range):
             w.valueChanged.connect(self._update_readouts)
-        for w in (self.sld_stretch,):
+        for w in (self.sld_stretch, self.sld_pitch):
             w.valueChanged.connect(self._update_readouts)
         self.cmb_mapping.currentTextChanged.connect(self._update_readouts)
         self.cmb_rate.currentTextChanged.connect(self._update_readouts)
@@ -671,6 +693,7 @@ class MainWindow(QMainWindow):
             st.sample_rate = 44100
         st.duration_s = parse_duration(self.edit_duration.text())
         st.time_stretch = float(self.sld_stretch.value())
+        st.pitch = float(self.sld_pitch.value())
 
         st.quality = self.cmb_quality.currentText()
         st.gl_iterations = int(self.sld_iters.value())
@@ -718,6 +741,7 @@ class MainWindow(QMainWindow):
         self.cmb_rate.setCurrentText(str(st.sample_rate))
         self.edit_duration.setText(format_duration(st.duration_s))
         self.sld_stretch.set_value(st.time_stretch)
+        self.sld_pitch.set_value(st.pitch)
 
         self.cmb_quality.setCurrentText(st.quality)
         self.sld_iters.set_value(st.gl_iterations)
@@ -810,6 +834,21 @@ class MainWindow(QMainWindow):
                 f"Brightness is used directly, {quiet} through {loud}; "
                 "Gain and Range are ignored.")
 
+        # Pitch, in the musical units a correction is usually thought of in.
+        if abs(st.pitch - 1.0) < 5e-3:
+            self.lbl_pitch.setText("1.00× — no change. Length is never affected "
+                                   "by this; use Duration or Time stretch for that.")
+        else:
+            semis = 12.0 * float(np.log2(max(st.pitch, 1e-6)))
+            way = "up" if semis > 0 else "down"
+            top = st.max_freq * st.pitch
+            warn = ("" if top <= st.sample_rate / 2 else
+                    f"  Content above {st.sample_rate // 2} Hz is pushed past "
+                    f"Nyquist and lost.")
+            self.lbl_pitch.setText(
+                f"{st.pitch:.2f}× — {way} {abs(semis):.1f} semitones. "
+                f"Length unchanged.{warn}")
+
         # Take the size from the clamped crop, so these lines agree with the
         # picture on screen even while a slider is being dragged past the edge.
         view = self.cropped_rgb()
@@ -884,9 +923,9 @@ class MainWindow(QMainWindow):
         # Crop can never exceed a quarter of the image, so the sliders are
         # rescaled to the image that is actually loaded.
         for sld in (self.sld_crop_l, self.sld_crop_r):
-            sld.set_limits(0, max(1, w // 4))
+            sld.set_limits(0, _crop_limit(w))
         for sld in (self.sld_crop_t, self.sld_crop_b):
-            sld.set_limits(0, max(1, h // 4))
+            sld.set_limits(0, _crop_limit(h))
         self.btn_convert.setEnabled(True)
         self.btn_preview.setEnabled(True)
         self._set_image_controls_enabled(True)
@@ -1001,9 +1040,9 @@ class MainWindow(QMainWindow):
         self._show_cropped()
         self.image_view.set_selection(None)
         for sld in (self.sld_crop_l, self.sld_crop_r):
-            sld.set_limits(0, max(1, w // 4))
+            sld.set_limits(0, _crop_limit(w))
         for sld in (self.sld_crop_t, self.sld_crop_b):
-            sld.set_limits(0, max(1, h // 4))
+            sld.set_limits(0, _crop_limit(h))
         if self.image_path is not None:
             self.lbl_file.setText(f"{self.image_path.name}  ({w} × {h})")
         self.log(f"Layout set to {self.cmb_orientation.currentText()} — "

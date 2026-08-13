@@ -126,6 +126,11 @@ class Settings:
     sample_rate: int = 44100         # Hz
     duration_s: float = 0.0          # 0 or blank = infer from image width
     time_stretch: float = 1.0        # by-ear multiplier applied to the duration
+    # Frequency multiplier applied when the image is read onto the FFT grid,
+    # BEFORE phase reconstruction: 2.0 sounds an octave up, 0.5 an octave down.
+    # Length is unaffected - only Duration, Time stretch and Sample rate move
+    # that. 1.0 is off and costs nothing.
+    pitch: float = 1.0
 
     # ---- Denoise ----------------------------------------------------------
     denoise_db: float = 0.0          # 0 = off; how hard to push the noise floor down

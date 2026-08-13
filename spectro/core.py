@@ -331,8 +331,18 @@ def build_magnitude(level: np.ndarray, st: Settings, progress: ProgressFn = _noo
 
     # --- frequency axis: for every FFT bin, where does it sit in the image? --
     bin_freqs = np.fft.rfftfreq(n_fft, d=1.0 / st.sample_rate)
-    unit = freq_to_unit(bin_freqs, st.min_freq, st.max_freq, st.freq_scale)
+    # Pitch: to make the output sound `pitch` times higher, the bin that will
+    # be heard at frequency f must be filled from the part of the image drawn
+    # at f / pitch.  Shifting here rather than on the finished audio means
+    # phase reconstruction runs on the shifted spectrum and stays consistent
+    # with it, so this adds no artifacts of its own and cannot change the
+    # length - the frame count is decided by the time axis alone.
+    pitch = float(st.pitch) if st.pitch and st.pitch > 0 else 1.0
+    src_freqs = bin_freqs / pitch
+    unit = freq_to_unit(src_freqs, st.min_freq, st.max_freq, st.freq_scale)
     rows = unit * (h - 1)
+    # Bins whose source frequency falls off the image get nothing: shifting up
+    # empties the top of the range, shifting down pushes content past Nyquist.
     inside = (unit >= 0.0) & (unit <= 1.0) & (bin_freqs <= st.sample_rate / 2.0)
 
     r0 = np.clip(np.floor(rows).astype(np.int64), 0, h - 1)
@@ -352,7 +362,9 @@ def build_magnitude(level: np.ndarray, st: Settings, progress: ProgressFn = _noo
     progress(0.20, "Mapping time axis")
 
     grid[~inside, :] = 0.0                     # bins the image never showed
-    mag = level_to_magnitude(grid, bin_freqs, st)
+    # High boost is undone at the frequency the pixel was DRAWN at, which is
+    # the source frequency - not the shifted one it will be heard at.
+    mag = level_to_magnitude(grid, src_freqs, st)
 
     # Put the magnitudes on the same scale our own STFT produces.  A drawing
     # program reports 0 dB for a full-scale sine, whose STFT peak bin is

@@ -76,8 +76,26 @@ the hop size. So:
 - If you know the length, type it in the Duration box as `1:23.5` or `83.5`.
   The result is then correct in both pitch and tempo.
 - If you leave it blank, the program assumes one pixel column per FFT frame and
-  tells you what that works out to. Then use **Time stretch** by ear. It works
-  exactly like tape speed: it changes pitch and tempo together.
+  tells you what that works out to. Then use **Time stretch** by ear. It is the
+  same knob as Duration, expressed as a multiplier — 6 s at 2× is the 12 s
+  render exactly — and it does not move pitch.
+
+**3. The pitch, if it comes out sharp or flat.** Getting Min/Max frequency or
+the Scale wrong warps pitch while leaving the timing right, so there is a
+separate **Pitch** slider, 0.50× to 2.00× with 1.00× meaning off. The readout
+gives the shift in semitones.
+
+It works by reading each FFT bin from a different part of the image, before
+phase reconstruction runs, so it is exact, adds no artifacts of its own and
+never changes the length. Two consequences worth knowing: shifting up pushes
+the top of the range past Nyquist, where it is lost, and shifting down leaves
+the top of the range empty. The three knobs that affect pitch and length:
+
+| Control | Pitch | Length |
+|---|---|---|
+| Pitch | changes | unchanged |
+| Duration / Time stretch | unchanged | changes |
+| Sample rate | changes | changes (true tape speed) |
 
 ## Why it never sounds perfect
 
