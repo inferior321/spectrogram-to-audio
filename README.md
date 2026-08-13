@@ -337,6 +337,7 @@ from the pair, the way Audacity's were.
 
 ```
 main.py              entry point (GUI, or --cli)
+audio-to-spectrogram.py  companion: makes spectrograms with ffmpeg (stdlib + Tk)
 run.sh               launcher that uses the venv
 spectro/settings.py  every tunable, its default, and the quality presets
 spectro/colormap.py  colour gradients: reading levels out of pixels
@@ -356,6 +357,72 @@ tools/extract_tool_palettes.py  rebuilds tools.npz by running ffmpeg and sox
 
 `file.py` at the top level is the empty placeholder this project started from;
 nothing uses it and it can be deleted.
+
+## Making the pictures: `audio-to-spectrogram.py`
+
+A companion tool ships alongside: a small Tk window around ffmpeg's
+`showspectrumpic`, for turning audio *into* spectrograms that this program can
+read back. The two share nothing but an understanding of what the images mean.
+
+```bash
+python3 audio-to-spectrogram.py
+```
+
+**It does not use the venv and needs nothing from pip** — only the standard
+library. Two things must be on the system:
+
+| | |
+|---|---|
+| **ffmpeg** | does the work. Without it, Generate refuses with a dialog. |
+| **python3-tk** | the GUI toolkit. **Not installable with pip** — on Debian and Ubuntu it is a separate package from Python itself, and importing `tkinter` fails without it. |
+
+```bash
+sudo apt install ffmpeg python3-tk
+```
+
+`ffprobe` comes with ffmpeg and is used for the duration and sample-rate
+readouts. It is also **required for "Split into chunks"** — without it the
+length is unknown and chunking is skipped, so the window says so rather than
+quietly writing one image where you asked for twelve.
+
+### Settings that matter for reading back
+
+**Orientation must be `vertical`.** That is the default, and it is what puts
+time along the width. `horizontal` transposes the picture — frequency along the
+width, time down the height — which is fine to look at and unreadable as audio
+unless you rotate it first. The window says `TRANSPOSED` when it is selected,
+and this program's **Layout → "Time on Y, rotate anticlockwise"** reads one
+correctly if you already have one.
+
+**Time resolution is usually what limits the result.** The picture's width is
+the number of time columns for the *whole* file, so a long track in a narrow
+image is coarse: 4096 columns across five minutes is 12 columns per second,
+81 ms each, and reading it back stretches every column over seven frames of
+invented detail. The window reports this live and calls it *too coarse*,
+*usable* or *good*. Either pick a wide size — `16384x2048`, `32768x2048`,
+`65536x2048` are there for this — or tick **Split into chunks** and convert the
+pieces.
+
+**The frequency axis sets the FFT size**, exactly and without rounding: the
+transform is twice the frequency axis in pixels, so 2048 px means FFT 4096 and
+1080 px means FFT 2160. Sizes whose frequency axis is a power of two can be
+matched here exactly (`4096x2048` → window 4096, padding 1); the screen-shaped
+ones cannot, and get resampled onto the nearest grid. The window says which
+case you are in.
+
+**Settings to mirror in this program**, for the defaults that tool ships with:
+
+| in Spectrogrammer | here |
+|---|---|
+| Colour map `intensity` | Came from → `ffmpeg — intensity` |
+| Freq. axis `lin` | Scale → `Linear`, 0 Hz to half the sample rate |
+| Dyn. range `120` | Mapping → `Plain dB range`, Range 120 |
+| Window `hann` | Window type → `Hann` |
+| Size `4096x2048` | Window size 4096, Zero padding 1 |
+| Orientation `vertical` | Layout → `Time on X (normal)` |
+
+Gain and Saturation at 1.0 are ffmpeg's own defaults and need no compensation.
+Leave **Draw legend / axes** off, or crop the axes away before reading.
 
 ## Requirements
 
