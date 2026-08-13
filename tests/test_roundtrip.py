@@ -12,6 +12,7 @@ Run with:  ./run.sh --cli   ... no; use   venv/bin/python -m tests.test_roundtri
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -836,6 +837,97 @@ def test_zoom_and_pan(tmp: Path) -> None:
         app.processEvents()
 
 
+class _FakePlayer:
+    """Stands in for the audio device: records calls, makes no sound."""
+
+    available = True
+    error = None
+
+    def __init__(self) -> None:
+        self.playing = False
+        self.calls: list[str] = []
+
+    def play(self, audio, sample_rate) -> None:
+        self.playing = True
+        self.calls.append(f"play:{len(audio) / sample_rate:.2f}")
+
+    def stop(self) -> None:
+        if self.playing:
+            self.calls.append("stop")
+        self.playing = False
+
+    def is_playing(self) -> bool:
+        return self.playing
+
+
+def test_preview_replaces_playback() -> None:
+    """Starting a render must silence whatever is already playing.
+
+    Two faults used to combine here.  Nothing stopped playback when a new
+    render began, so the previous preview carried on underneath it; and the
+    finished handler called the Play/Stop *toggle*, which - finding audio still
+    playing - switched it off.  The old clip therefore cut out at the very
+    moment the new one should have started, and the new one was never heard at
+    all.
+    """
+    print("\nPreview replaces what is playing")
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PyQt6.QtWidgets import QApplication
+        from spectro.gui import MainWindow
+    except Exception as exc:                       # pragma: no cover
+        print(f"  SKIP - no Qt available ({exc})")
+        return
+
+    root = Path(__file__).resolve().parent.parent / "testing-files"
+    sample = root / "linear3.png"
+    if not sample.is_file():
+        print("  SKIP - reference exports not present")
+        return
+
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    try:
+        win.player = _FakePlayer()
+        win.show()
+        win.load_image(sample)
+        win.cmb_quality.setCurrentText("Draft - fastest preview")
+        win._apply_quality()
+
+        def run(region: tuple[float, float]) -> None:
+            win.image_view.set_selection(region)
+            win.start_preview()
+            deadline = time.time() + 300
+            while win._thread is not None and time.time() < deadline:
+                app.processEvents()
+                time.sleep(0.02)
+
+        run((0.10, 0.16))
+        check("the first preview plays", win.player.is_playing(),
+              str(win.player.calls))
+        first = [c for c in win.player.calls if c.startswith("play:")][0]
+
+        run((0.50, 0.60))
+        calls = win.player.calls
+        check("the second preview is playing too", win.player.is_playing(), str(calls))
+        check("the previous one was stopped first", "stop" in calls, str(calls))
+        played = [c for c in calls if c.startswith("play:")]
+        check("the SECOND clip is what plays, not the first",
+              len(played) == 2 and played[1] != first, str(played))
+        check("stop came between the two", calls.index("stop") < len(calls) - 1,
+              str(calls))
+
+        # And the button is still a toggle for the user.
+        win.toggle_play()
+        check("the Play button stops it", not win.player.is_playing())
+        win.toggle_play()
+        check("and starts it again", win.player.is_playing())
+    finally:
+        win.close()
+        app.processEvents()
+
+
 def test_gui_source_selection() -> None:
     """The dropdown must set the scheme, and loading must not override it."""
     print("\nGUI source selection")
@@ -1006,6 +1098,7 @@ def main() -> int:
     test_real_audacity_exports()
     test_window_does_not_grow(tmp / 'gui')
     test_zoom_and_pan(tmp / 'gui')
+    test_preview_replaces_playback()
     test_gui_source_selection()
     test_roundtrip()
     print("\n" + ("ALL PASSED" if not FAILURES else f"FAILED: {FAILURES}"))

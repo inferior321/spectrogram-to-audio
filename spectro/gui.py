@@ -874,6 +874,9 @@ class MainWindow(QMainWindow):
         """Shared by Convert and Preview - they differ only in settings."""
         if self.rgb is None or self._thread is not None:
             return
+        # Whatever is playing belongs to the result about to be replaced, so
+        # stop it now rather than letting it run underneath the new render.
+        self.stop_playback()
         level = core.to_level(self.rgb, st)
         self._previewing = preview
         self.log(f"{'Preview' if preview else 'Converting'}: {st.color_scheme}, "
@@ -972,7 +975,7 @@ class MainWindow(QMainWindow):
         self.progress.setFormat("%p%  —  done")
         # A preview exists to be heard, so play it as soon as it is ready.
         if preview and self.player.available:
-            self.toggle_play()
+            self.start_playback()
 
     def _on_failed(self, message: str) -> None:
         self._teardown_thread()
@@ -987,18 +990,36 @@ class MainWindow(QMainWindow):
     # -- playback and export ----------------------------------------------
 
     def toggle_play(self) -> None:
+        """The Play/Stop button."""
+        if self.player.is_playing():
+            self.stop_playback()
+        else:
+            self.start_playback()
+
+    def stop_playback(self) -> None:
+        """Silence whatever is playing and put the button back."""
+        self.player.stop()
+        self._playtimer.stop()
+        self.waveform.set_playhead(None)
+        self.btn_play.setText("Play")
+
+    def start_playback(self) -> None:
+        """Play the current result from the beginning.
+
+        Deliberately not a toggle.  This is also what runs when a preview
+        finishes, and a toggle there did the opposite of what it looked like:
+        if the previous preview was still playing, the new one arriving would
+        toggle playback OFF, so the old audio cut out at the exact moment the
+        new one should have started and the new one was never heard.
+        """
         if self.result is None:
             return
-        if self.player.is_playing():
-            self.player.stop()
-            self._playtimer.stop()
-            self.waveform.set_playhead(None)
-            self.btn_play.setText("Play")
-            return
+        self.player.stop()          # never let two results overlap
         try:
             self.player.play(self.result.audio, self.result.sample_rate)
         except Exception as exc:
             self.log(f"Playback failed: {exc}", "error")
+            self.stop_playback()
             return
         self._play_pos = 0.0
         self._playtimer.start()
