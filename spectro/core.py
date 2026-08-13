@@ -163,6 +163,34 @@ def to_level(rgb: np.ndarray, st: Settings) -> np.ndarray:
     return np.clip(lev.astype(np.float32), 0.0, 1.0)
 
 
+def level_to_db(level: float, st: Settings, *, silent_at_zero: bool = True) -> float:
+    """Brightness 0..1 -> dBFS, by exactly the curve level_to_magnitude undoes.
+
+    The hover readout and the calibration line both come through here. They
+    used to each carry their own copy of the Audacity formula, so with any
+    other mapping selected the two disagreed with each other and with the
+    conversion - hovering black read -100 dBFS while the calibration line
+    directly below it said the quiet end was -80.
+
+    `silent_at_zero` is what the picture MEANS: an unlit pixel is silence, not
+    the bottom of the scale. The calibration line passes False because it is
+    naming where the ends of the scale sit, not reading a pixel.
+    """
+    lev = float(level)
+    if silent_at_zero and lev <= max(0.0, st.floor_gate):
+        return float("-inf")
+    mapping = st.level_mapping
+    if mapping == "Audacity dB (gain/range)":
+        return lev * st.range_db - st.range_db - st.gain_db
+    if mapping == "Plain dB range":
+        return (lev - 1.0) * st.range_db
+    if lev <= 0.0:
+        return float("-inf")
+    if mapping == "Linear power":
+        return 10.0 * float(np.log10(lev))
+    return 20.0 * float(np.log10(lev))         # "Linear amplitude"
+
+
 def level_to_magnitude(level: np.ndarray, freqs: np.ndarray, st: Settings) -> np.ndarray:
     """Undo the drawing curve: 0..1 brightness -> linear STFT magnitude.
 

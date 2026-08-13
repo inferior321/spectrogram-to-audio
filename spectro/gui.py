@@ -570,6 +570,13 @@ class MainWindow(QMainWindow):
         for key, value in src.overrides.items():
             put(key, value)
         self._source_keys = set(src.overrides)
+        # The load line names the scheme, and it stayed on screen after the
+        # dropdown moved on - so the log claimed "Audacity Grayscale" while the
+        # dropdown said ffmpeg. Record the change instead of leaving a lie as
+        # the last word in the log.
+        if self.rgb is not None and src.scheme != getattr(self, "_logged_scheme", None):
+            self.log(f"Now reading the image as: {src.label}.", "good")
+            self._logged_scheme = src.scheme
         self._describe_source()
         self._update_readouts()
 
@@ -766,16 +773,20 @@ class MainWindow(QMainWindow):
         quiet, loud = colormap.scheme_ends(st.color_scheme)
         if st.flip_polarity:
             quiet, loud = loud, quiet
+        # Both ends come from the same function the hover readout uses, so the
+        # two lines can never quote different numbers for the same pixel.
+        lo_db = core.level_to_db(0.0, st, silent_at_zero=False)
+        hi_db = core.level_to_db(1.0, st, silent_at_zero=False)
         if st.level_mapping == "Audacity dB (gain/range)":
             self.lbl_calib.setText(
-                f"Quiet end ({quiet}) = {-st.range_db - st.gain_db:.0f} dBFS, "
-                f"loud end ({loud}) = {-st.gain_db:.0f} dBFS. "
+                f"Quiet end ({quiet}) = {lo_db:.0f} dBFS, "
+                f"loud end ({loud}) = {hi_db:.0f} dBFS. "
                 "Raising Gain makes the result quieter overall; raising Range "
                 "lifts more of the quiet detail.")
         elif st.level_mapping == "Plain dB range":
             self.lbl_calib.setText(
-                f"Quiet end ({quiet}) = {-st.range_db:.0f} dBFS, "
-                f"loud end ({loud}) = 0 dBFS. Gain is ignored.")
+                f"Quiet end ({quiet}) = {lo_db:.0f} dBFS, "
+                f"loud end ({loud}) = {hi_db:.0f} dBFS. Gain is ignored.")
         else:
             self.lbl_calib.setText(
                 f"Brightness is used directly, {quiet} through {loud}; "
@@ -860,6 +871,7 @@ class MainWindow(QMainWindow):
         self.image_view.set_selection(None)
         self.log(f"Loaded {path.name} — {w} × {h} pixels. "
                  f"Reading it as: {self._current_scheme}.", "good")
+        self._logged_scheme = self._current_scheme
         self._update_readouts()
 
     def dragEnterEvent(self, event) -> None:      # noqa: N802
@@ -896,10 +908,10 @@ class MainWindow(QMainWindow):
         lvl = float(colormap.level_from_scheme(px.reshape(1, 1, 3), st.color_scheme)[0, 0])
         if st.flip_polarity:
             lvl = 1.0 - lvl
-        db = lvl * st.range_db - st.range_db - st.gain_db
+        db = core.level_to_db(lvl, st)
+        shown = "silent" if db == float("-inf") else f"≈ {db:6.1f} dBFS"
         self.lbl_hover.setText(
-            f"{freq:8.0f} Hz    t = {t:6.2f} s    level {lvl:.2f}"
-            f"    ≈ {db:6.1f} dBFS")
+            f"{freq:8.0f} Hz    t = {t:6.2f} s    level {lvl:.2f}    {shown}")
 
     # -- conversion --------------------------------------------------------
 

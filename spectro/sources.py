@@ -89,6 +89,15 @@ FFMPEG_MODES = ["intensity", "rainbow", "moreland", "nebulae", "fire", "fiery",
                 "fruit", "cool", "magma", "green", "viridis", "plasma",
                 "cividis", "terrain", "channel"]
 
+# showspectrumpic states its calibration in its own options: drange is the
+# dynamic range in dBFS (default 120) and limit is the top of the scale
+# (default 0), so brightness maps as dB = (level - 1) * drange. Measured
+# against tones at 0/-20/-40 dBFS on ffmpeg 6.1.1: the slope came out 0.01255
+# level/dB at drange=80 (1/80 = 0.0125) and 0.00843 at drange=120 (1/120 =
+# 0.00833). The frequency axis starts at 0 Hz - `start` defaults to 0.
+FFMPEG_LEVELS = {"level_mapping": "Plain dB range", "range_db": 120.0,
+                 "min_freq": 0.0}
+
 # SoX's spectrogram flags.  Its display is calibrated by documented defaults -
 # 120 dB of range topping out at 0 dBFS - so the level mapping can be set
 # correctly too, which is not possible for most sources.
@@ -136,7 +145,13 @@ def catalogue() -> list[Source]:
     for mode in FFMPEG_MODES:
         key = f"ffmpeg: {mode}"
         if colormap.get_lut(key) is not None:
-            items.append(Source(f"ffmpeg — {mode}", key, "exact"))
+            items.append(Source(
+                f"ffmpeg — {mode}", key, "exact",
+                "showspectrumpic's own defaults are 120 dB of range topping "
+                "out at 0 dBFS starting from 0 Hz, so the level mapping is set "
+                "for you. If you passed drange=N, set Range to N. Max "
+                "frequency is half the sample rate unless you passed stop=N.",
+                dict(FFMPEG_LEVELS)))
 
     items.append(_sep("── SoX spectrogram (exact) ──"))
     for label, key, note in SOX_MODES:

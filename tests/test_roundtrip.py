@@ -1022,6 +1022,68 @@ def test_calibration_names_the_right_ends() -> None:
         app.processEvents()
 
 
+def test_readouts_agree_about_dbfs() -> None:
+    """Hover, calibration line and conversion must quote the same dB.
+
+    Each of the three carried its own copy of the Audacity formula
+    `level*range - range - gain`. With Plain dB range selected, hovering an
+    unlit pixel read "-100.0 dBFS" while the calibration line an inch below it
+    said the quiet end was -80, and the conversion used a third value again.
+    They all go through core.level_to_db now.
+    """
+    print("\ndBFS readouts")
+    from spectro import core
+    from spectro.settings import Settings
+
+    for mapping, lo, hi in (("Audacity dB (gain/range)", -100.0, -20.0),
+                            ("Plain dB range", -80.0, 0.0)):
+        st = Settings()
+        st.level_mapping, st.range_db, st.gain_db = mapping, 80.0, 20.0
+        ends = (core.level_to_db(0.0, st, silent_at_zero=False),
+                core.level_to_db(1.0, st, silent_at_zero=False))
+        check(f"{mapping}: ends are {lo} .. {hi}",
+              abs(ends[0] - lo) < 0.01 and abs(ends[1] - hi) < 0.01, str(ends))
+
+        # And the middle of the ramp must match what the conversion will do.
+        for lvl in (0.25, 0.5, 0.75):
+            mag = core.level_to_magnitude(np.array([[lvl]], dtype=np.float32),
+                                          np.array([1000.0]), st)[0, 0]
+            said = core.level_to_db(lvl, st)
+            check(f"{mapping}: level {lvl} agrees with the conversion",
+                  abs(20 * np.log10(mag) - said) < 0.01,
+                  f"conversion {20 * np.log10(mag):.2f} vs readout {said:.2f}")
+
+    # An unlit pixel is silence, not the bottom of the scale.
+    st = Settings()
+    check("level 0 reads as silent, not as the floor",
+          core.level_to_db(0.0, st) == float("-inf"))
+
+
+def test_ffmpeg_sources_are_calibrated() -> None:
+    """ffmpeg entries must pin the mapping the way SoX and Spek do.
+
+    showspectrumpic documents drange (default 120 dBFS) and limit (default 0),
+    so brightness maps as dB = (level - 1) * drange - there is nothing to
+    guess. The entries carried no overrides, so an ffmpeg export was read with
+    the Audacity dialog's 80 dB range and 20 dB gain: 40 dB of stretch in the
+    wrong direction, and a 1 Hz bottom on an axis that starts at 0.
+    """
+    print("\nffmpeg calibration")
+    from spectro import sources
+
+    seen = 0
+    for src in sources.catalogue():
+        if not src.label.startswith("ffmpeg —"):
+            continue
+        seen += 1
+        ov = src.overrides
+        check(f"{src.label} pins the mapping",
+              ov.get("level_mapping") == "Plain dB range"
+              and ov.get("range_db") == 120.0
+              and ov.get("min_freq") == 0.0, str(ov))
+    check("every ffmpeg mode was checked", seen >= 10, f"{seen} modes")
+
+
 def test_text_is_readable() -> None:
     """Every label must contrast with the background it sits on.
 
@@ -1245,6 +1307,8 @@ def main() -> int:
     test_zoom_and_pan(tmp / 'gui')
     test_preview_replaces_playback()
     test_calibration_names_the_right_ends()
+    test_readouts_agree_about_dbfs()
+    test_ffmpeg_sources_are_calibrated()
     test_text_is_readable()
     test_bin_ratio_advice()
     test_gui_source_selection()
