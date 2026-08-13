@@ -19,7 +19,8 @@ ffprobe (shipped with ffmpeg) is used for the duration and sample-rate
 readouts and is required for "Split into chunks" to do anything.
 
 Run:
-    python3 audio-to-spectrogram.py
+    ./audio-to-spectrogram.sh        checks for both first, then starts
+    python3 audio-to-spectrogram.py  same thing without the checks
 """
 
 import os

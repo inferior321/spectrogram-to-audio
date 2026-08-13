@@ -28,8 +28,8 @@ There is a GUI with zoom, region previews and playback, and a CLI for scripting.
 ## Running it
 
 ```bash
-./run.sh                          # open the GUI
-./run.sh testing-files/image.png  # open the GUI with an image already loaded
+./spectrogram-to-audio.sh                          # open the GUI
+./spectrogram-to-audio.sh testing-files/image.png  # open the GUI with an image already loaded
 ```
 
 Everything is installed in `venv/` inside this folder. To remove the project
@@ -45,12 +45,12 @@ venv/bin/pip install -r requirements.txt
 There is also a headless mode:
 
 ```bash
-./run.sh --cli testing-files/image.png -o out.mp3 --duration 1:23 --quality High
-./run.sh --cli images/*.png --outdir audio/ --source viridis
-./run.sh --cli image.png -o out.mp3 --source "Color (classic)" --scale Mel
-./run.sh --cli --list-sources              # the catalogue, grouped and labelled
-./run.sh --cli --list-schemes              # every gradient, by raw name
-./run.sh --cli image.png -o clip.wav --from 0.2 --to 0.3 --denoise 10 --format wav
+./spectrogram-to-audio.sh --cli testing-files/image.png -o out.mp3 --duration 1:23 --quality High
+./spectrogram-to-audio.sh --cli images/*.png --outdir audio/ --source viridis
+./spectrogram-to-audio.sh --cli image.png -o out.mp3 --source "Color (classic)" --scale Mel
+./spectrogram-to-audio.sh --cli --list-sources              # the catalogue, grouped and labelled
+./spectrogram-to-audio.sh --cli --list-schemes              # every gradient, by raw name
+./spectrogram-to-audio.sh --cli image.png -o clip.wav --from 0.2 --to 0.3 --denoise 10 --format wav
 ```
 
 Tests: `venv/bin/python -m tests.test_roundtrip`
@@ -336,9 +336,10 @@ from the pair, the way Audacity's were.
 ## Layout
 
 ```
-main.py              entry point (GUI, or --cli)
-audio-to-spectrogram.py  companion: makes spectrograms with ffmpeg (stdlib + Tk)
-run.sh               launcher that uses the venv
+spectrogram-to-audio.sh  picture -> sound.  Launcher; uses the venv
+spectrogram-to-audio.py  the same, as a python entry point (GUI, or --cli)
+audio-to-spectrogram.sh  sound -> picture.  Launcher; checks ffmpeg and Tk
+audio-to-spectrogram.py  the companion tool itself (standard library only)
 spectro/settings.py  every tunable, its default, and the quality presets
 spectro/colormap.py  colour gradients: reading levels out of pixels
 spectro/sources.py   the catalogue of tools and schemes you pick from
@@ -365,15 +366,16 @@ A companion tool ships alongside: a small Tk window around ffmpeg's
 read back. The two share nothing but an understanding of what the images mean.
 
 ```bash
-python3 audio-to-spectrogram.py
+./audio-to-spectrogram.sh
 ```
 
 **Nothing it needs comes from pip.** It imports only the standard library, so
 either interpreter runs it:
 
 ```bash
-python3 audio-to-spectrogram.py          # system python
-./venv/bin/python audio-to-spectrogram.py    # the venv works too
+./audio-to-spectrogram.sh                     # checks ffmpeg and Tk first
+python3 audio-to-spectrogram.py               # same, unchecked
+./venv/bin/python audio-to-spectrogram.py     # the venv works too
 ```
 
 The venv works not because it contains anything for this tool, but because a

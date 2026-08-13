@@ -1,8 +1,8 @@
 """Headless conversion, for scripting or for machines with no display.
 
-    ./run.sh --cli image.png -o out.mp3 --source "Color (classic)" --scale Mel
-    ./run.sh --cli folder/*.png --outdir audio/ --source viridis
-    ./run.sh --cli --list-sources
+    ./spectrogram-to-audio.sh --cli image.png -o out.mp3 --source "Color (classic)" --scale Mel
+    ./spectrogram-to-audio.sh --cli folder/*.png --outdir audio/ --source viridis
+    ./spectrogram-to-audio.sh --cli --list-sources
 """
 
 from __future__ import annotations

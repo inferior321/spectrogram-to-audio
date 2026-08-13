@@ -6,7 +6,7 @@ recovered spectrum matches.  It verifies the dB mapping, the axis mapping and
 the resynthesis together - a sign error or an off-by-one in any of them shows
 up as a large spectral error.
 
-Run with:  ./run.sh --cli   ... no; use   venv/bin/python -m tests.test_roundtrip
+Run with:  venv/bin/python -m tests.test_roundtrip
 """
 
 from __future__ import annotations
