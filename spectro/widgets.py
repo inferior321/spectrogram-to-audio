@@ -168,7 +168,7 @@ class Section(QWidget):
     def add_note(self, text: str) -> QLabel:
         lbl = QLabel(text)
         lbl.setWordWrap(True)
-        lbl.setStyleSheet("color: palette(mid); font-size: 11px;")
+        lbl.setStyleSheet("font-size: 11px;")
         return self.add_wide(lbl)
 
 
@@ -439,7 +439,7 @@ class WaveformView(QWidget):
         p.drawLine(0, int(mid), w, int(mid))
 
         if self._audio is None or len(self._audio) == 0:
-            p.setPen(QColor("#777"))
+            p.setPen(QColor("#b4b4b4"))
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
                        "Waveform appears here after conversion")
             return

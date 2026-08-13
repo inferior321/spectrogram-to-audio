@@ -971,6 +971,57 @@ def test_bin_ratio_advice() -> None:
         app.processEvents()
 
 
+def test_text_is_readable() -> None:
+    """Every label must contrast with the background it sits on.
+
+    The hint text under each control used to be styled palette(mid). That is a
+    BORDER colour: nothing requires it to contrast with the window, and on a
+    dark theme it landed 7 luminance units from the background - a faint
+    outline where a sentence should be. The default text colour is the only one
+    the theme guarantees to be readable against its own background, so the
+    hints now set only their size and inherit the rest.
+    """
+    print("\nLabel contrast")
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PyQt6.QtGui import QPalette
+        from PyQt6.QtWidgets import QApplication, QLabel
+        from spectro.gui import MainWindow
+        from spectro.widgets import ImageView
+    except Exception as exc:                       # pragma: no cover
+        print(f"  SKIP - no Qt available ({exc})")
+        return
+
+    def lum(c) -> float:
+        return 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    try:
+        background = lum(app.palette().color(QPalette.ColorRole.Window))
+        worst = (None, 1e9)
+        for label in win.findChildren(QLabel):
+            if isinstance(label, ImageView):
+                continue          # paints its own dark background
+            colour = label.palette().color(label.foregroundRole())
+            contrast = abs(lum(colour) - background)
+            if contrast < worst[1]:
+                worst = (label.objectName() or (label.text()[:30] or "<blank>"), contrast)
+        check("no label is washed into the background", worst[1] > 60,
+              f"worst is {worst[1]:.1f} on '{worst[0]}'")
+
+        # And the specific mistake, named, so it cannot come back by that route.
+        offenders = [n for n in ("lbl_file", "lbl_hover", "lbl_source",
+                                 "lbl_calib", "lbl_bins", "lbl_time")
+                     if "palette(mid)" in getattr(win, n).styleSheet()]
+        check("no hint label uses palette(mid) as a text colour", not offenders,
+              str(offenders))
+    finally:
+        win.close()
+        app.processEvents()
+
+
 def test_gui_source_selection() -> None:
     """The dropdown must set the scheme, and loading must not override it."""
     print("\nGUI source selection")
@@ -1142,6 +1193,7 @@ def main() -> int:
     test_window_does_not_grow(tmp / 'gui')
     test_zoom_and_pan(tmp / 'gui')
     test_preview_replaces_playback()
+    test_text_is_readable()
     test_bin_ratio_advice()
     test_gui_source_selection()
     test_roundtrip()

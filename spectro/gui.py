@@ -138,7 +138,11 @@ class MainWindow(QMainWindow):
         self.btn_open = QPushButton("Open image…")
         self.btn_open.clicked.connect(self.open_image)
         self.lbl_file = QLabel("no file")
-        self.lbl_file.setStyleSheet("color: palette(mid);")
+        # no colour override: palette(mid) is a border colour and on a
+        # dark theme it lands 7 luminance units from the background,
+        # which is invisible. The default text colour is the only one
+        # guaranteed to contrast with the background it sits on.
+        self.lbl_file.setStyleSheet("")
         # Long names are elided rather than allowed to push the window wider.
         self.lbl_file.setSizePolicy(QSizePolicy.Policy.Ignored,
                                     QSizePolicy.Policy.Preferred)
@@ -153,7 +157,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.image_view, 1)
 
         self.lbl_hover = QLabel("Hover the image to read off frequency and time.")
-        self.lbl_hover.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self.lbl_hover.setStyleSheet("font-size: 11px;")
         lay.addWidget(self.lbl_hover)
 
         self.waveform = WaveformView()
@@ -209,7 +213,7 @@ class MainWindow(QMainWindow):
             "right. Every image is read the same way, so put images from one "
             "source and one frequency axis in a folder together.")
         note.setWordWrap(True)
-        note.setStyleSheet("color: palette(mid); font-size: 11px;")
+        note.setStyleSheet("font-size: 11px;")
         lay.addWidget(note)
 
         row = QHBoxLayout()
@@ -292,7 +296,7 @@ class MainWindow(QMainWindow):
                   "spectrogram.")
         self.lbl_source = QLabel()
         self.lbl_source.setWordWrap(True)
-        self.lbl_source.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self.lbl_source.setStyleSheet("font-size: 11px;")
         s.add_wide(self.lbl_source)
         self.chk_flip = QCheckBox("Flip polarity (swap loud and quiet)")
         s.add_wide(self.chk_flip)
@@ -350,7 +354,7 @@ class MainWindow(QMainWindow):
                   "background is a light grey rather than pure white.")
         self.lbl_calib = QLabel()
         self.lbl_calib.setWordWrap(True)
-        self.lbl_calib.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self.lbl_calib.setStyleSheet("font-size: 11px;")
         s.add_wide(self.lbl_calib)
         lay.addWidget(s)
         self.sec_level = s
@@ -377,7 +381,7 @@ class MainWindow(QMainWindow):
                   "FFT size = window size × this, exactly as in Audacity.")
         self.lbl_bins = QLabel()
         self.lbl_bins.setWordWrap(True)
-        self.lbl_bins.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self.lbl_bins.setStyleSheet("font-size: 11px;")
         s.add_wide(self.lbl_bins)
         self.cmb_overlap = QComboBox()
         self.cmb_overlap.addItems(["2", "4", "8", "16"])
@@ -404,7 +408,7 @@ class MainWindow(QMainWindow):
                   "shifts pitch, exactly like changing tape speed.")
         self.lbl_time = QLabel()
         self.lbl_time.setWordWrap(True)
-        self.lbl_time.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self.lbl_time.setStyleSheet("font-size: 11px;")
         s.add_wide(self.lbl_time)
         lay.addWidget(s)
         self.sec_time = s
