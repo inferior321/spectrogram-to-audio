@@ -368,8 +368,23 @@ read back. The two share nothing but an understanding of what the images mean.
 python3 audio-to-spectrogram.py
 ```
 
-**It does not use the venv and needs nothing from pip** — only the standard
-library. Two things must be on the system:
+**Nothing it needs comes from pip.** It imports only the standard library, so
+either interpreter runs it:
+
+```bash
+python3 audio-to-spectrogram.py          # system python
+./venv/bin/python audio-to-spectrogram.py    # the venv works too
+```
+
+The venv works not because it contains anything for this tool, but because a
+venv inherits its base interpreter's standard library. There is no `tkinter`
+inside `venv/` at all — it resolves to `/usr/lib/python3.x/tkinter/`. So
+`pip install -r requirements.txt` will never supply it, and if the system
+package is missing the tool fails inside the venv exactly as it does outside.
+The main program is unaffected either way: it uses PyQt6, which *is* a pip
+package and *is* in the venv.
+
+Two things must therefore be on the system:
 
 | | |
 |---|---|
