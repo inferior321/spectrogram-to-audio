@@ -760,18 +760,26 @@ class MainWindow(QMainWindow):
     def _update_readouts(self, *_: object) -> None:
         st = self.current_settings()
 
+        # Name the ends by the colours the CHOSEN scheme actually uses. This
+        # said "white = quiet, black = loud" regardless, which is right for
+        # Audacity's Grayscale and backwards for ffmpeg, SoX and Spek.
+        quiet, loud = colormap.scheme_ends(st.color_scheme)
+        if st.flip_polarity:
+            quiet, loud = loud, quiet
         if st.level_mapping == "Audacity dB (gain/range)":
             self.lbl_calib.setText(
-                f"White = {-st.range_db - st.gain_db:.0f} dBFS, "
-                f"black = {-st.gain_db:.0f} dBFS. "
+                f"Quiet end ({quiet}) = {-st.range_db - st.gain_db:.0f} dBFS, "
+                f"loud end ({loud}) = {-st.gain_db:.0f} dBFS. "
                 "Raising Gain makes the result quieter overall; raising Range "
                 "lifts more of the quiet detail.")
         elif st.level_mapping == "Plain dB range":
             self.lbl_calib.setText(
-                f"White = {-st.range_db:.0f} dBFS, black = 0 dBFS. Gain is ignored.")
+                f"Quiet end ({quiet}) = {-st.range_db:.0f} dBFS, "
+                f"loud end ({loud}) = 0 dBFS. Gain is ignored.")
         else:
-            self.lbl_calib.setText("Brightness is used directly; Gain and Range "
-                                   "are ignored.")
+            self.lbl_calib.setText(
+                f"Brightness is used directly, {quiet} through {loud}; "
+                "Gain and Range are ignored.")
 
         full = self.rgb.shape[1] - st.crop_left - st.crop_right if self.rgb is not None else 0
         if full > 0:

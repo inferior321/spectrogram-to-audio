@@ -214,8 +214,12 @@ level = (dB + Range + Gain) / Range        drawing
 dB    = level × Range − Range − Gain       what this program undoes
 ```
 
-With Gain 20 and Range 80, white is −100 dBFS and black is −20 dBFS. The panel
-shows this calibration live as you move the sliders. Raising **Gain** makes the
+With Gain 20 and Range 80 that puts the quiet end of the gradient at
+−100 dBFS and the loud end at 0 dBFS − 20. The panel shows this live as you
+move the sliders, naming the colours **the chosen scheme actually uses** —
+Audacity's Grayscale runs white to black, while ffmpeg, SoX and Spek all run
+black to white, so which colour is quiet depends on the scheme rather than
+being a fixed fact. Raising **Gain** makes the
 result quieter overall; raising **Range** lifts more quiet detail out of the
 floor. **Noise gate** forces near-silent levels to true silence, which helps
 when a background is light grey rather than pure white — the reference image

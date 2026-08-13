@@ -115,6 +115,57 @@ def level_from_lut(rgb: np.ndarray, lut: np.ndarray) -> np.ndarray:
     return (idx[inverse] / 255.0).astype(np.float32)
 
 
+def scheme_ends(scheme: str) -> tuple[str, str]:
+    """Plain-English colours of the quiet and loud ends of a scheme.
+
+    Used for the calibration readout, which used to say "white = quiet, black
+    = loud" whatever was selected.  That is true of Audacity's Grayscale and
+    backwards for most of the rest - ffmpeg, SoX and Spek all run black to
+    white - so the ends are looked up rather than assumed.
+    """
+    if scheme == "Greyscale (light = quiet)":
+        return "white", "black"
+    if scheme == "Greyscale (dark = quiet)":
+        return "black", "white"
+    lut = get_lut(scheme)
+    if lut is None:
+        return "the quiet end", "the loud end"
+    return _colour_word(lut[0]), _colour_word(lut[255])
+
+
+_HUES = ["red", "orange", "yellow", "yellow-green", "green", "spring green",
+         "cyan", "azure", "blue", "violet", "magenta", "pink"]
+
+
+def _colour_word(rgb: np.ndarray) -> str:
+    """A short name for one colour: 'black', 'pale blue', 'orange'."""
+    r, g, b = (float(v) for v in rgb[:3])
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    hi, lo = max(r, g, b), min(r, g, b)
+    chroma = hi - lo
+
+    # A low bar on purpose. Audacity's Color (classic) ends on rgb(240,243,255)
+    # and rgb(255,239,239) - chroma of 15 and 16 - and calling both of those
+    # "white" hides the very thing worth knowing about that scheme, which is
+    # that its two ends are nearly the same colour.
+    if chroma < 10:                       # no useful hue left
+        return ("black" if lum < 40 else "dark grey" if lum < 100 else
+                "grey" if lum < 170 else "pale grey" if lum < 225 else "white")
+
+    if hi == r:
+        h = (g - b) / chroma % 6
+    elif hi == g:
+        h = (b - r) / chroma + 2
+    else:
+        h = (r - g) / chroma + 4
+    name = _HUES[int(round(h * 2)) % 12]
+    if lum > 200:
+        return f"pale {name}"
+    if lum < 70:
+        return f"dark {name}"
+    return name
+
+
 def level_from_scheme(rgb: np.ndarray, scheme: str) -> np.ndarray:
     """Level image for any scheme name, computed or bundled.
 

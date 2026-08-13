@@ -971,6 +971,57 @@ def test_bin_ratio_advice() -> None:
         app.processEvents()
 
 
+def test_calibration_names_the_right_ends() -> None:
+    """The dB readout must name the colours the chosen scheme actually uses.
+
+    It used to say "white = quiet, black = loud" whatever was selected. That is
+    right for Audacity's Grayscale and backwards for ffmpeg, SoX, Spek and
+    Audacity's own Inverse Grayscale, all of which run black to white - so the
+    readout told half the users the opposite of the truth.
+    """
+    print("\nCalibration readout")
+    from spectro import colormap
+
+    for scheme, quiet, loud in (
+            ("Audacity Grayscale", "white", "black"),
+            ("Audacity Inverse Grayscale", "black", "white"),
+            ("ffmpeg: intensity", "black", "white"),
+            ("sox: mono", "black", "white"),
+            ("sox: light", "white", "black"),
+            ("Greyscale (light = quiet)", "white", "black"),
+            ("Greyscale (dark = quiet)", "black", "white")):
+        got = colormap.scheme_ends(scheme)
+        check(f"{scheme}: {quiet} -> {loud}", got == (quiet, loud), str(got))
+
+    # A scheme whose ends are nearly the same colour must still distinguish
+    # them, since that is the interesting thing about it.
+    q, l = colormap.scheme_ends("Audacity Color (classic)")
+    check("Color (classic) tells its two pale ends apart", q != l, f"{q} / {l}")
+
+    # And the readout itself must use them, not the words white and black.
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PyQt6.QtWidgets import QApplication
+        from spectro.gui import MainWindow
+    except Exception as exc:                       # pragma: no cover
+        print(f"  SKIP - no Qt for the readout ({exc})")
+        return
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow()
+    try:
+        labels = [win.cmb_source.itemText(i) for i in range(win.cmb_source.count())]
+        index = labels.index("ffmpeg — intensity")
+        win.cmb_source.setCurrentIndex(index)
+        win._on_source_changed(index)
+        text = win.lbl_calib.text().lower()
+        check("a black-to-white scheme reads that way round",
+              text.index("black") < text.index("white"), win.lbl_calib.text())
+    finally:
+        win.close()
+        app.processEvents()
+
+
 def test_text_is_readable() -> None:
     """Every label must contrast with the background it sits on.
 
@@ -1193,6 +1244,7 @@ def main() -> int:
     test_window_does_not_grow(tmp / 'gui')
     test_zoom_and_pan(tmp / 'gui')
     test_preview_replaces_playback()
+    test_calibration_names_the_right_ends()
     test_text_is_readable()
     test_bin_ratio_advice()
     test_gui_source_selection()
