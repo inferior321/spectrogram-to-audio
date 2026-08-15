@@ -50,14 +50,14 @@ def parse_duration(text: str) -> float:
 def _crop_limit(size: int) -> int:
     """How far one crop slider may travel on an image `size` pixels across.
 
-    A quarter of the image was too mean on small exports - a 288-pixel-tall
-    matplotlib figure capped at 72, which is not enough to reach past a legend.
-    Allow a flat 100 px, or a quarter when that is larger, and never more than
-    size - 1 so a single slider cannot ask for the whole image. Opposing
-    sliders can still overrun each other; core.crop_box is what guarantees a
-    row and a column always survive.
+    A quarter of the image was too mean twice over: a 288-pixel-tall matplotlib
+    figure capped at 72, and a 475-pixel-tall screenshot capped at 118 when its
+    black top band alone was 126 px. Allow half the side, or a flat 100 px when
+    that is larger, and never more than size - 1 so one slider cannot ask for
+    the whole image. Opposing sliders can still overrun each other;
+    core.crop_box is what guarantees a row and a column always survive.
     """
-    return max(1, min(size - 1, max(100, size // 4)))
+    return max(1, min(size - 1, max(100, size // 2)))
 
 
 def format_duration(seconds: float) -> str:

@@ -1328,9 +1328,14 @@ def test_crop_limit() -> None:
     print("\nCrop slider range")
     from spectro.gui import _crop_limit
 
-    for size, want in ((288, 100), (432, 108), (2048, 512), (200, 100)):
+    for size, want in ((288, 144), (432, 216), (2048, 1024), (200, 100),
+                       (475, 237)):
         got = _crop_limit(size)
         check(f"a {size} px side allows {want} px", got == want, f"got {got}")
+    # The case that prompted the raise: a 475 px tall screenshot whose black
+    # top band is 126 px must be trimmable.
+    check("a 475 px side reaches past a 126 px band", _crop_limit(475) >= 126,
+          f"limit {_crop_limit(475)}")
     # Tiny images must still leave something behind.
     for size in (1, 2, 5, 50):
         got = _crop_limit(size)
