@@ -76,9 +76,10 @@ class ConvertWorker(QObject):
     finished = pyqtSignal(object)
     failed = pyqtSignal(str)
 
-    def __init__(self, level: np.ndarray, st: Settings) -> None:
+    def __init__(self, level: np.ndarray, st: Settings,
+                 noise: np.ndarray | None = None) -> None:
         super().__init__()
-        self._level, self._st = level, st
+        self._level, self._st, self._noise = level, st, noise
         self._cancel = False
 
     def cancel(self) -> None:
@@ -91,7 +92,8 @@ class ConvertWorker(QObject):
             self.progress.emit(frac, msg)
 
         try:
-            self.finished.emit(core.convert(self._level, self._st, report))
+            self.finished.emit(
+                core.convert(self._level, self._st, report, self._noise))
         except core.Cancelled:
             self.failed.emit("Cancelled.")
         except Exception:
@@ -112,6 +114,8 @@ class MainWindow(QMainWindow):
         self.image_path: Path | None = None
         self.rgb: np.ndarray | None = None
         self.result: core.Result | None = None
+        # The stretch marked as noise, as fractions of the cropped width.
+        self._noise_region: tuple[float, float] | None = None
         self.player = audio_io.Player()
         self._thread: QThread | None = None
         self._worker: ConvertWorker | None = None
@@ -486,14 +490,39 @@ class MainWindow(QMainWindow):
 
         # ---- denoise ------------------------------------------------------
         s = Section("Denoise")
+        buttons = QWidget()
+        row = QHBoxLayout(buttons)
+        row.setContentsMargins(0, 0, 0, 0)
+        self.btn_noise_set = QPushButton("Use selection as noise")
+        self.btn_noise_set.setToolTip(
+            "Drag across a stretch of the image that is background only, then "
+            "press this. That stretch becomes the profile of what silence "
+            "looks like, and is subtracted from the rest.")
+        self.btn_noise_set.clicked.connect(self.capture_noise)
+        self.btn_noise_clear = QPushButton("Clear")
+        self.btn_noise_clear.clicked.connect(self.clear_noise)
+        row.addWidget(self.btn_noise_set)
+        row.addWidget(self.btn_noise_clear)
+        row.addStretch(1)
+        s.add_wide(buttons)
+        self.lbl_noise = QLabel()
+        self.lbl_noise.setWordWrap(True)
+        self.lbl_noise.setStyleSheet("font-size: 11px;")
+        s.add_wide(self.lbl_noise)
+
         self.sld_denoise = SliderSpin(0, 40, 0, 1, 0, " dB")
         s.add_row("Reduce background:", self.sld_denoise,
-                  "0 is off. Attenuates each frequency bin by how close it sits "
-                  "to its own noise floor.")
-        self.sld_denoise_pct = SliderSpin(1, 60, 20, 1, 0, "th pct")
-        s.add_row("Floor estimate:", self.sld_denoise_pct,
-                  "Which percentile over time counts as 'the background' for "
-                  "each bin. Lower assumes the background is quieter.")
+                  "How far to push the marked noise down. 0 is off.")
+        self.sld_denoise_sens = SliderSpin(0.25, 4.00, 1.00, 0.05, 2, "×")
+        s.add_row("Sensitivity:", self.sld_denoise_sens,
+                  "How far above the profile a bin must sit to count as signal. "
+                  "Above 1 cuts harder and risks eating quiet detail; below 1 "
+                  "cuts less and leaves more background.")
+        self.sld_denoise_smooth = SliderSpin(0, 16, 3, 1, 0, " bins")
+        s.add_row("Frequency smoothing:", self.sld_denoise_smooth,
+                  "Averages the amount of cut across neighbouring frequencies. "
+                  "Without it, isolated bins flick between kept and cut and "
+                  "warble - the 'musical noise' that subtraction leaves behind.")
         s.add_note("Applied to the magnitudes before phase reconstruction, so "
                    "Griffin-Lim never has to invent phase for hiss - which is "
                    "where much of the watery quality comes from.")
@@ -539,6 +568,8 @@ class MainWindow(QMainWindow):
         self.cmb_overlap.currentTextChanged.connect(self._update_readouts)
         self.cmb_format.currentTextChanged.connect(self._update_readouts)
         self.sld_denoise.valueChanged.connect(self._update_readouts)
+        self.sld_denoise_sens.valueChanged.connect(self._update_readouts)
+        self.sld_denoise_smooth.valueChanged.connect(self._update_readouts)
         self.cmb_padding.currentTextChanged.connect(self._update_readouts)
         return scroll
 
@@ -702,7 +733,10 @@ class MainWindow(QMainWindow):
         st.random_seed = int(self.sld_seed.value())
 
         st.denoise_db = float(self.sld_denoise.value())
-        st.denoise_percentile = float(self.sld_denoise_pct.value())
+        st.denoise_sensitivity = float(self.sld_denoise_sens.value())
+        st.denoise_smoothing = int(self.sld_denoise_smooth.value())
+        region = self._noise_region
+        st.noise_start, st.noise_end = region if region else (0.0, 0.0)
         sel = self.image_view.selection()
         st.preview_start, st.preview_end = sel if sel else (0.0, 1.0)
         st.normalize = self.chk_normalize.isChecked()
@@ -750,7 +784,8 @@ class MainWindow(QMainWindow):
         self.sld_seed.set_value(st.random_seed)
 
         self.sld_denoise.set_value(st.denoise_db)
-        self.sld_denoise_pct.set_value(st.denoise_percentile)
+        self.sld_denoise_sens.set_value(st.denoise_sensitivity)
+        self.sld_denoise_smooth.set_value(st.denoise_smoothing)
         self.chk_normalize.setChecked(st.normalize)
         self.sld_target.set_value(st.target_dbfs)
         self.sld_fade.set_value(st.fade_ms)
@@ -834,6 +869,23 @@ class MainWindow(QMainWindow):
                 f"Brightness is used directly, {quiet} through {loud}; "
                 "Gain and Range are ignored.")
 
+        # Denoise: say plainly whether anything is actually being subtracted.
+        region = self._noise_region
+        if region is None:
+            self.lbl_noise.setText(
+                "No noise marked — denoising is off. Drag across a stretch of "
+                "the image that is background only, then press the button.")
+        elif st.denoise_db <= 0:
+            self.lbl_noise.setText(
+                f"Noise marked at {region[0] * 100:.1f}%–{region[1] * 100:.1f}%, "
+                "but 'Reduce background' is 0 dB, so nothing is subtracted.")
+        else:
+            self.lbl_noise.setText(
+                f"Subtracting the profile from {region[0] * 100:.1f}%–"
+                f"{region[1] * 100:.1f}% of the image, {st.denoise_db:.0f} dB "
+                f"down, sensitivity {st.denoise_sensitivity:.2f}×, smoothed "
+                f"over ±{st.denoise_smoothing:.0f} bins.")
+
         # Pitch, in the musical units a correction is usually thought of in.
         if abs(st.pitch - 1.0) < 5e-3:
             self.lbl_pitch.setText("1.00× — no change. Length is never affected "
@@ -888,7 +940,8 @@ class MainWindow(QMainWindow):
         else:
             self.lbl_bins.setText("Load an image to compare rows against FFT bins.")
 
-        self.sld_denoise_pct.setEnabled(st.denoise_db > 0)
+        for w in (self.sld_denoise_sens, self.sld_denoise_smooth):
+            w.setEnabled(st.denoise_db > 0)
         self.cmb_bitrate.setEnabled(st.output_format == "mp3")
         self.cmb_depth.setEnabled(st.output_format in ("wav", "flac"))
         self.sld_target.setEnabled(st.normalize)
@@ -929,6 +982,9 @@ class MainWindow(QMainWindow):
         self.btn_convert.setEnabled(True)
         self.btn_preview.setEnabled(True)
         self._set_image_controls_enabled(True)
+        # A profile describes one picture; carrying it to another would
+        # subtract a floor measured somewhere else entirely.
+        self._forget_noise()
         self.image_view.set_selection(None)
         self.log(f"Loaded {path.name} — {w} × {h} pixels. "
                  f"Reading it as: {self._current_scheme}.", "good")
@@ -947,6 +1003,7 @@ class MainWindow(QMainWindow):
                 break
 
     def reset_defaults(self) -> None:
+        self._forget_noise()
         self.apply_settings(Settings())
         self.log("Settings reset to the Audacity dialog defaults.", "good")
 
@@ -994,6 +1051,9 @@ class MainWindow(QMainWindow):
         # stop it now rather than letting it run underneath the new render.
         self.stop_playback()
         level = core.to_level(self.rgb, st)
+        # From the whole cropped image, so the noise patch does not have
+        # to sit inside the region being previewed.
+        noise = core.noise_profile(self.rgb, st)
         self._previewing = preview
         self.log(f"{'Preview' if preview else 'Converting'}: {st.color_scheme}, "
                  f"{st.freq_scale} {st.min_freq:.0f}–{st.max_freq:.0f} Hz, "
@@ -1001,7 +1061,7 @@ class MainWindow(QMainWindow):
                  f"{st.phase_init}, {level.shape[1]} columns.")
 
         self._thread = QThread(self)
-        self._worker = ConvertWorker(level, st)
+        self._worker = ConvertWorker(level, st, noise)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
@@ -1038,6 +1098,8 @@ class MainWindow(QMainWindow):
         self.rgb = core.apply_orientation(self.raw_rgb, self.current_settings())
         h, w, _ = self.rgb.shape
         self._show_cropped()
+        # Rotating swaps the axes, so the stored fractions mean nothing now.
+        self._forget_noise("Layout changed, so the noise profile was cleared.")
         self.image_view.set_selection(None)
         for sld in (self.sld_crop_l, self.sld_crop_r):
             sld.set_limits(0, _crop_limit(w))
@@ -1064,6 +1126,48 @@ class MainWindow(QMainWindow):
         for sec in (self.sec_source, self.sec_freq, self.sec_level):
             sec.set_body_enabled(enabled)
 
+    # -- noise profile -----------------------------------------------------
+
+    def capture_noise(self) -> None:
+        """Copy the current drag selection into the stored noise region."""
+        if self.rgb is None:
+            return
+        sel = self.image_view.selection()
+        if sel is None:
+            self.log("Drag across a background-only stretch of the image "
+                     "first, then press this.", "warn")
+            return
+        lo, hi = float(min(sel)), float(max(sel))
+        if hi - lo < 0.002:
+            self.log("That selection is too narrow to measure a noise floor "
+                     "from. Drag a wider stretch.", "warn")
+            return
+        self._noise_region = (lo, hi)
+        self.image_view.set_noise_selection(self._noise_region)
+        # The preview selection is deliberately left alone: the noise stretch
+        # is now stored separately, so the drag is free to move on.
+        self.log(f"Noise profile taken from {lo * 100:.1f}%-{hi * 100:.1f}% "
+                 f"of the image.", "good")
+        if self.sld_denoise.value() <= 0:
+            self.log("Raise 'Reduce background' above 0 dB to hear it applied.",
+                     "warn")
+        self._update_readouts()
+
+    def clear_noise(self) -> None:
+        self._forget_noise("Noise profile cleared.")
+
+    def _forget_noise(self, why: str = "") -> None:
+        """Drop the profile. Anything that changes which pixels the stored
+        fractions point at has to call this, or the floor silently belongs to
+        a different part of a different picture."""
+        if self._noise_region is None:
+            return
+        self._noise_region = None
+        self.image_view.set_noise_selection(None)
+        if why:
+            self.log(why)
+        self._update_readouts()
+
     def cropped_rgb(self) -> np.ndarray | None:
         """The pixels the conversion will actually read, crop applied.
 
@@ -1083,6 +1187,10 @@ class MainWindow(QMainWindow):
         self.image_view.set_array(view, keep_view=keep_view)
 
     def _on_crop_changed(self, _value: float = 0.0) -> None:
+        # A stored noise region is a fraction of the CROPPED width, so
+        # trimming an edge moves which columns it points at.
+        self._forget_noise('Crop changed, so the noise profile no longer '
+                           'lines up - cleared.')
         # Keep the zoom: trimming an edge is usually done zoomed in on it.
         self._show_cropped(keep_view=True)
         self._update_readouts()
@@ -1246,7 +1354,8 @@ class MainWindow(QMainWindow):
                     self.progress.setValue(int(1000 * (i - 1 + frac) / len(images)))
                     QApplication.processEvents()
 
-                res = core.convert(core.to_level(rgb, st), st, report)
+                res = core.convert(core.to_level(rgb, st), st, report,
+                                   core.noise_profile(rgb, st))
                 dest = out_dir / f"{img_path.stem}.{st.output_format}"
                 audio_io.export(res.audio, res.sample_rate, dest,
                                 st.output_format, st.mp3_bitrate_kbps, st.bit_depth)

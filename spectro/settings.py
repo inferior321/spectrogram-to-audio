@@ -134,7 +134,15 @@ class Settings:
 
     # ---- Denoise ----------------------------------------------------------
     denoise_db: float = 0.0          # 0 = off; how hard to push the noise floor down
-    denoise_percentile: float = 20.0 # per-bin floor estimated at this percentile
+    denoise_sensitivity: float = 1.0 # multiple of the profile that counts as signal
+    denoise_smoothing: int = 3       # gain is averaged over +/- this many bins
+    # The stretch of image captured as "this is what silence looks like", as
+    # fractions of the CROPPED width.  end <= start means nothing is captured
+    # and denoising is off.  The profile itself is not stored here: it is an
+    # array, it is derived from the picture, and Settings must stay copyable
+    # and serialisable.  core.noise_profile() computes it when needed.
+    noise_start: float = 0.0
+    noise_end: float = 0.0
 
     # ---- Preview region ---------------------------------------------------
     # Fractions of the image width; 0..1 means the whole thing.

@@ -317,20 +317,16 @@ def frames_to_duration(n_frames: int, st: Settings) -> float:
     return length / float(st.sample_rate)
 
 
-def build_magnitude(level: np.ndarray, st: Settings, progress: ProgressFn = _noop) -> np.ndarray:
-    """Resample the level image onto the (n_bins x n_frames) STFT grid.
+def _row_map(h: int, st: Settings):
+    """Where each FFT bin reads from, in an image `h` rows tall.
 
-    Interpolation happens in the *level* domain rather than on magnitudes:
-    brightness is roughly logarithmic, so averaging there behaves like
-    averaging decibels, which is much better behaved than averaging raw
-    amplitudes across a 80 dB range.
+    Returns the two neighbouring row indices, the blend weight between them, a
+    mask of bins the image actually covers, and the SOURCE frequency of each
+    bin. Shared so the noise profile lands on exactly the same grid as the
+    picture it was cut from - a profile mapped even slightly differently would
+    subtract the wrong bins.
     """
-    h, w = level.shape
-    n_fft = st.n_fft
-    n_frames = infer_frame_count(w, st)
-
-    # --- frequency axis: for every FFT bin, where does it sit in the image? --
-    bin_freqs = np.fft.rfftfreq(n_fft, d=1.0 / st.sample_rate)
+    bin_freqs = np.fft.rfftfreq(st.n_fft, d=1.0 / st.sample_rate)
     # Pitch: to make the output sound `pitch` times higher, the bin that will
     # be heard at frequency f must be filled from the part of the image drawn
     # at f / pitch.  Shifting here rather than on the finished audio means
@@ -347,7 +343,43 @@ def build_magnitude(level: np.ndarray, st: Settings, progress: ProgressFn = _noo
 
     r0 = np.clip(np.floor(rows).astype(np.int64), 0, h - 1)
     r1 = np.clip(r0 + 1, 0, h - 1)
-    wr = (rows - r0).astype(np.float32)[:, None]
+    wr = (rows - r0).astype(np.float32)
+    return r0, r1, wr, inside, src_freqs
+
+
+def noise_profile(rgb: np.ndarray, st: Settings) -> np.ndarray | None:
+    """Average level per image row across the stretch marked as noise.
+
+    Returns one number per row - a picture of what silence looks like in this
+    image - or None when nothing is marked.  Computed from the WHOLE cropped
+    image rather than from whatever the preview happens to be showing, so the
+    noise patch does not have to be inside the region being previewed.
+    """
+    if not (float(st.noise_end) - float(st.noise_start) > 1e-6):
+        return None
+    probe = st.copy()
+    probe.preview_start = float(st.noise_start)
+    probe.preview_end = float(st.noise_end)
+    level = to_level(rgb, probe)
+    return level.mean(axis=1).astype(np.float32)
+
+
+def build_magnitude(level: np.ndarray, st: Settings, progress: ProgressFn = _noop,
+                    noise: np.ndarray | None = None) -> np.ndarray:
+    """Resample the level image onto the (n_bins x n_frames) STFT grid.
+
+    Interpolation happens in the *level* domain rather than on magnitudes:
+    brightness is roughly logarithmic, so averaging there behaves like
+    averaging decibels, which is much better behaved than averaging raw
+    amplitudes across a 80 dB range.
+    """
+    h, w = level.shape
+    n_fft = st.n_fft
+    n_frames = infer_frame_count(w, st)
+
+    # --- frequency axis: for every FFT bin, where does it sit in the image? --
+    r0, r1, wr_flat, inside, src_freqs = _row_map(h, st)
+    wr = wr_flat[:, None]
     progress(0.10, "Mapping frequency axis")
 
     # --- time axis: linear resample of columns ------------------------------
@@ -374,33 +406,57 @@ def build_magnitude(level: np.ndarray, st: Settings, progress: ProgressFn = _noo
     window = make_window(st.window_type, st.window_size)
     mag *= float(np.sum(window)) / 2.0
 
-    if st.denoise_db > 0:
-        mag = denoise(mag, st)
+    if st.denoise_db > 0 and noise is not None and len(noise) == h:
+        # Put the profile through the SAME row mapping and the same level
+        # curve, so a noise row and a picture row of equal brightness become
+        # equal magnitudes and the subtraction is like-for-like.
+        col = noise[r0] * (1.0 - wr_flat) + noise[r1] * wr_flat
+        col = np.where(inside, col, 0.0)[:, None]
+        floor = level_to_magnitude(col, src_freqs, st)[:, 0]
+        floor *= float(np.sum(window)) / 2.0
+        mag = denoise(mag, st, floor)
 
     # A magnitude spectrum must be real and non-negative at DC and Nyquist.
     mag[0, :] = 0.0                            # kill DC so there is no offset
     return np.ascontiguousarray(mag, dtype=np.float32)
 
 
-def denoise(mag: np.ndarray, st: Settings) -> np.ndarray:
-    """Push down the steady background without touching the signal.
+def denoise(mag: np.ndarray, st: Settings, floor: np.ndarray) -> np.ndarray:
+    """Push a measured noise floor down without touching the signal above it.
 
-    The floor is estimated per frequency bin as a low percentile over time,
-    which is what a constant hiss looks like, and each bin is then attenuated
-    by how far it sits above its own floor.  Doing it per bin matters: a
-    picture's background is not flat, and a single global threshold would eat
-    quiet high frequencies while leaving low-frequency rumble alone.
+    `floor` is one magnitude per frequency bin, taken from the stretch of image
+    the user marked as noise. Each bin is attenuated by how far it sits above
+    its own floor, which matters because a picture's background is not flat: a
+    single global threshold eats quiet high frequencies while leaving
+    low-frequency rumble untouched.
 
     This runs on the magnitudes before phase reconstruction, so Griffin-Lim
     never has to invent phase for noise that is about to be removed - which is
     also where its watery character comes from.
+
+    The floor used to be guessed as a low percentile over time. That assumed
+    the noise was steady and that most of any given bin was silence, which is
+    wrong for music, and it is why the guessed version disappointed.
     """
-    floor = np.percentile(mag, np.clip(st.denoise_percentile, 0.0, 90.0), axis=1,
-                          keepdims=True)
+    sens = max(0.05, float(st.denoise_sensitivity))
+    threshold = np.maximum(np.asarray(floor, dtype=np.float32)[:, None] * sens, EPS)
+    # Smoothly go from full attenuation at the threshold to untouched above it.
+    gain = np.clip((mag / threshold - 1.0) / 2.0, 0.0, 1.0)
+
+    # Frequency smoothing: average the gain over neighbouring bins. Subtraction
+    # on its own leaves isolated bins flicking between kept and cut, which is
+    # heard as "musical noise" - a warbling of tones that were never there.
+    k = int(max(0, st.denoise_smoothing))
+    if k > 0 and gain.shape[0] > 2 * k + 1:
+        width = 2 * k + 1
+        padded = np.pad(gain, ((k, k), (0, 0)), mode="edge")
+        cums = np.concatenate(
+            [np.zeros((1, gain.shape[1]), dtype=np.float32),
+             np.cumsum(padded, axis=0, dtype=np.float32)], axis=0)
+        rows = gain.shape[0]
+        gain = (cums[width:width + rows] - cums[:rows]) / float(width)
+
     reduction = 10.0 ** (-abs(st.denoise_db) / 20.0)
-    excess = mag / np.maximum(floor, EPS)
-    # Smoothly go from full attenuation at the floor to untouched well above it.
-    gain = np.clip((excess - 1.0) / 2.0, 0.0, 1.0)
     return (mag * (reduction + (1.0 - reduction) * gain)).astype(np.float32)
 
 
@@ -687,10 +743,16 @@ class Result:
     peak_dbfs: float
 
 
-def convert(level: np.ndarray, st: Settings, progress: ProgressFn = _noop) -> Result:
-    """Run the whole pipeline on an already-loaded level image."""
+def convert(level: np.ndarray, st: Settings, progress: ProgressFn = _noop,
+            noise: np.ndarray | None = None) -> Result:
+    """Run the whole pipeline on an already-loaded level image.
+
+    `noise` is the per-row profile from core.noise_profile(), passed in
+    rather than kept on Settings: it is an array derived from the picture,
+    and Settings has to stay copyable and serialisable.
+    """
     progress(0.02, "Building magnitude spectrogram")
-    mag = build_magnitude(level, st, progress)
+    mag = build_magnitude(level, st, progress, noise)
 
     progress(0.25, "Reconstructing phase")
     x = griffin_lim(mag, st, progress)
@@ -731,4 +793,4 @@ def convert(level: np.ndarray, st: Settings, progress: ProgressFn = _noop) -> Re
 
 def convert_file(path: str, st: Settings, progress: ProgressFn = _noop) -> Result:
     rgb = load_image(path)
-    return convert(to_level(rgb, st), st, progress)
+    return convert(to_level(rgb, st), st, progress, noise_profile(rgb, st))

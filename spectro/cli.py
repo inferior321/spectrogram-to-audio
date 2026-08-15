@@ -59,8 +59,15 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--gate", type=float, default=st.floor_gate)
     g.add_argument("--denoise", type=float, default=st.denoise_db,
                    help="dB of background reduction; 0 is off")
-    g.add_argument("--denoise-pct", type=float, default=st.denoise_percentile,
-                   help="percentile over time treated as each bin's noise floor")
+    g.add_argument("--noise-from", type=float, default=st.noise_start,
+                   help="start of the stretch to treat as noise, 0..1 of the width")
+    g.add_argument("--noise-to", type=float, default=st.noise_end,
+                   help="end of that stretch; equal to --noise-from means no denoising")
+    g.add_argument("--denoise-sensitivity", type=float,
+                   default=st.denoise_sensitivity,
+                   help="multiple of the profile that counts as signal")
+    g.add_argument("--denoise-smoothing", type=int, default=st.denoise_smoothing,
+                   help="average the gain over +/- this many frequency bins")
 
     g = p.add_argument_group("fft")
     g.add_argument("--window", type=int, default=st.window_size)
@@ -120,7 +127,10 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
                   + ", ".join(m.label for m in matches[:6]), file=sys.stderr)
     st.orientation = args.orientation
     st.flip_polarity = args.flip
-    st.denoise_db, st.denoise_percentile = args.denoise, args.denoise_pct
+    st.denoise_db = args.denoise
+    st.denoise_sensitivity = args.denoise_sensitivity
+    st.denoise_smoothing = args.denoise_smoothing
+    st.noise_start, st.noise_end = args.noise_from, args.noise_to
     st.preview_start, st.preview_end = args.region_from, args.region_to
     st.window_size, st.window_type = args.window, args.window_type
     st.zero_padding, st.overlap = args.padding, args.overlap
@@ -175,7 +185,8 @@ def main() -> int:
             if not args.quiet:
                 print(f"\r  {frac * 100:5.1f}%  {msg:<44}", end="", flush=True)
 
-        res = core.convert(core.to_level(rgb, this), this, report)
+        res = core.convert(core.to_level(rgb, this), this, report,
+                           core.noise_profile(rgb, this))
         if not args.quiet:
             print()
 

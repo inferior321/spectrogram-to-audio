@@ -220,6 +220,7 @@ class ImageView(QLabel):
         self._zoom = 1.0                       # 1.0 = whole image visible
         self._cx, self._cy = 0.5, 0.5          # image point at the view centre
         self._sel: tuple[float, float] | None = None
+        self._noise: tuple[float, float] | None = None
         self._dragging = False
         self._drag_from = 0.0
         self._panning = False
@@ -333,6 +334,15 @@ class ImageView(QLabel):
     def selection(self) -> tuple[float, float] | None:
         return self._sel
 
+    def noise_selection(self) -> tuple[float, float] | None:
+        return self._noise
+
+    def set_noise_selection(self, sel: tuple[float, float] | None) -> None:
+        """Mark the stretch captured as noise. Drawn, but never draggable -
+        it is set by the button so a stray drag cannot silently move it."""
+        self._noise = sel
+        self.update()
+
     def set_selection(self, sel: tuple[float, float] | None) -> None:
         self._sel = sel
         self.update()
@@ -418,6 +428,20 @@ class ImageView(QLabel):
                         self._pixmap.height() * scale)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, scale < 1.0)
         p.drawPixmap(target, self._pixmap, QRectF(self._pixmap.rect()))
+
+        # The captured noise stretch, underneath so a preview selection over
+        # the top of it still reads clearly. Amber against the selection's
+        # blue: the two mean different things and must never be confused.
+        if self._noise is not None:
+            x0, x1 = self._unit_to_x(self._noise[0]), self._unit_to_x(self._noise[1])
+            rect = QRectF(x0, oy, x1 - x0, self._pixmap.height() * scale)
+            p.fillRect(rect, QColor(255, 176, 32, 55))
+            p.setPen(QPen(QColor("#ffb020"), 1, Qt.PenStyle.DashLine))
+            p.drawRect(rect)
+            p.setPen(QColor("#ffb020"))
+            p.drawText(QRectF(x0, oy, max(60.0, x1 - x0), 16),
+                       int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                       " noise")
 
         if self._sel is not None:
             x0, x1 = self._unit_to_x(self._sel[0]), self._unit_to_x(self._sel[1])

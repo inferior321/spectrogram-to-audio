@@ -318,8 +318,11 @@ def test_denoise() -> None:
     rng = np.random.default_rng(6)
     mag = np.abs(rng.standard_normal((200, 300))).astype(np.float32) * 0.01
     mag[50:60, 100:150] += 1.0                      # a loud event
-    st = Settings(denoise_db=18, denoise_percentile=20)
-    out = core.denoise(mag, st)
+    st = Settings(denoise_db=18)
+    # The floor is now MEASURED from a marked patch rather than guessed as a
+    # percentile, so the test supplies one: the median of each bin's quiet part.
+    floor = np.median(mag[:, :90], axis=1)
+    out = core.denoise(mag, st, floor)
     floor_before = float(np.percentile(mag, 20))
     floor_after = float(np.percentile(out, 20))
     check("floor comes down", floor_after < floor_before * 0.3,
@@ -331,13 +334,20 @@ def test_denoise() -> None:
     # actually decides whether denoise runs at all.
     rng2 = np.random.default_rng(11)
     level = np.clip(rng2.beta(2, 5, (80, 120)), 0, 1).astype(np.float32)
-    off = core.build_magnitude(level, Settings(denoise_db=0.0, gl_iterations=1))
-    on = core.build_magnitude(level, Settings(denoise_db=12.0, gl_iterations=1))
+    prof = level.mean(axis=1)
+    off = core.build_magnitude(level, Settings(denoise_db=0.0, gl_iterations=1),
+                               noise=prof)
+    on = core.build_magnitude(level, Settings(denoise_db=12.0, gl_iterations=1),
+                              noise=prof)
     check("denoise 0 dB is a true no-op",
-          np.array_equal(off, core.build_magnitude(level,
-                                                   Settings(denoise_db=0.0,
-                                                            gl_iterations=1))))
+          np.array_equal(off, core.build_magnitude(
+              level, Settings(denoise_db=0.0, gl_iterations=1), noise=prof)))
     check("denoise 12 dB does change the magnitudes", not np.array_equal(off, on))
+    # And with no profile it must do nothing, whatever the dB is set to.
+    check("denoise with no profile is a no-op",
+          np.array_equal(
+              core.build_magnitude(level, Settings(denoise_db=0.0, gl_iterations=1)),
+              core.build_magnitude(level, Settings(denoise_db=30.0, gl_iterations=1))))
 
 
 def test_preview_region_shortens_the_audio() -> None:
@@ -1328,6 +1338,78 @@ def test_crop_limit() -> None:
               f"limit {got}")
 
 
+def test_noise_profile() -> None:
+    """Marking a quiet stretch must subtract that floor from the whole image."""
+    print("\nNoise profile")
+    rng = np.random.default_rng(9)
+    h, w = 256, 400
+    # A picture that is hiss everywhere, plus a loud band in the second half.
+    lvl = np.clip(0.30 + 0.02 * rng.standard_normal((h, w)), 0, 1)
+    lvl[120:140, 200:] = 0.95
+    rgb = np.repeat((1.0 - lvl)[:, :, None], 3, axis=2).astype(np.float32)  # white=quiet
+
+    st = Settings()
+    st.denoise_db, st.noise_start, st.noise_end = 24.0, 0.0, 0.25
+    prof = core.noise_profile(rgb, st)
+    check("a marked region yields one number per row",
+          prof is not None and prof.shape == (h,),
+          "None" if prof is None else str(prof.shape))
+    check("the profile reads the hiss level, not silence",
+          0.2 < float(np.mean(prof)) < 0.45, f"mean {float(np.mean(prof)):.3f}")
+
+    st_off = Settings()
+    st_off.denoise_db = 0.0
+    plain = core.build_magnitude(core.to_level(rgb, st_off), st_off)
+    cut = core.build_magnitude(core.to_level(rgb, st), st, noise=prof)
+
+    quiet = plain[:, :150]
+    quiet_cut = cut[:, :150]
+    check("the background comes down",
+          float(quiet_cut.mean()) < float(quiet.mean()) * 0.4,
+          f"{float(quiet.mean()):.4g} -> {float(quiet_cut.mean()):.4g}")
+    check("the loud band survives",
+          float(cut.max()) > float(plain.max()) * 0.7,
+          f"{float(plain.max()):.4g} -> {float(cut.max()):.4g}")
+
+    # No region marked means no profile and no change at all.
+    st_none = Settings()
+    st_none.denoise_db = 24.0
+    check("nothing marked yields no profile", core.noise_profile(rgb, st_none) is None)
+    untouched = core.build_magnitude(core.to_level(rgb, st_none), st_none,
+                                     noise=core.noise_profile(rgb, st_none))
+    check("nothing marked leaves the magnitudes alone",
+          np.array_equal(untouched, plain))
+
+    # Frequency smoothing must not change the overall amount of cut much, only
+    # how abruptly it varies between neighbouring bins.
+    st_rough, st_smooth = st.copy(), st.copy()
+    st_rough.denoise_smoothing, st_smooth.denoise_smoothing = 0, 8
+    rough = core.build_magnitude(core.to_level(rgb, st_rough), st_rough, noise=prof)
+    smooth = core.build_magnitude(core.to_level(rgb, st_smooth), st_smooth, noise=prof)
+    rough_jag = float(np.abs(np.diff(rough, axis=0)).mean())
+    smooth_jag = float(np.abs(np.diff(smooth, axis=0)).mean())
+    check("smoothing reduces bin-to-bin jaggedness", smooth_jag < rough_jag,
+          f"{rough_jag:.4g} -> {smooth_jag:.4g}")
+
+    # Sensitivity: lower cuts harder.
+    outs = []
+    for sens in (0.5, 1.0, 2.0):
+        s2 = st.copy()
+        s2.denoise_sensitivity = sens
+        outs.append(float(core.build_magnitude(
+            core.to_level(rgb, s2), s2, noise=prof)[:, :150].mean()))
+    check("higher sensitivity cuts harder", outs[0] > outs[1] > outs[2],
+          f"0.5x={outs[0]:.4g}  1.0x={outs[1]:.4g}  2.0x={outs[2]:.4g}")
+
+    # The profile must come from the whole image, not the previewed slice:
+    # marking the FIRST quarter must still work while previewing the LAST.
+    st_far = st.copy()
+    st_far.preview_start, st_far.preview_end = 0.75, 1.0
+    far = core.noise_profile(rgb, st_far)
+    check("the noise patch need not be inside the preview region",
+          far is not None and np.allclose(far, prof, atol=0.02))
+
+
 def test_text_is_readable() -> None:
     """Every label must contrast with the background it sits on.
 
@@ -1558,6 +1640,7 @@ def main() -> int:
     test_preview_replaces_playback()
     test_calibration_names_the_right_ends()
     test_crop_preview()
+    test_noise_profile()
     test_pitch()
     test_crop_limit()
     test_image_controls_wait_for_an_image()

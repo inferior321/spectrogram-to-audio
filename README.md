@@ -50,7 +50,8 @@ There is also a headless mode:
 ./spectrogram-to-audio.sh --cli image.png -o out.mp3 --source "Color (classic)" --scale Mel
 ./spectrogram-to-audio.sh --cli --list-sources              # the catalogue, grouped and labelled
 ./spectrogram-to-audio.sh --cli --list-schemes              # every gradient, by raw name
-./spectrogram-to-audio.sh --cli image.png -o clip.wav --from 0.2 --to 0.3 --denoise 10 --format wav
+./spectrogram-to-audio.sh --cli image.png -o clip.wav --from 0.2 --to 0.3 --format wav
+./spectrogram-to-audio.sh --cli image.png -o clip.wav --denoise 12 --noise-from 0 --noise-to 0.05   # subtract the first 5% as noise
 ```
 
 Tests: `venv/bin/python -m tests.test_roundtrip`
@@ -150,7 +151,8 @@ What actually helps, in order:
    interpolation rather than information. Dropping to padding 1 measured
    *better* (0.163 vs 0.171) and 1.75x faster. The FFT panel shows the
    rows-to-bins ratio live so you can see when they are mismatched.
-2. **Denoise**, which stops the reconstruction chasing background hiss.
+2. **Denoise**, which stops the reconstruction chasing background hiss -
+   but only once you have marked a stretch of the image as noise.
 3. **PGHI**, worth about 4% on images and far more on true spectrograms.
 4. More iterations - the smallest effect of the four.
 
@@ -285,14 +287,51 @@ PGHI + 32 iterations beats random + 200.
 
 ### Denoise
 
-Attenuates each frequency bin by how close it sits to *its own* noise floor,
-estimated as a low percentile over time. Doing it per bin matters - a picture's
-background is not flat, and a single global threshold eats quiet high
-frequencies while leaving low rumble alone.
+Drag across a stretch of the image that is **background only**, press **Use
+selection as noise**, then raise **Reduce background**. That stretch becomes a
+profile of what silence looks like in this picture, and every frequency bin is
+attenuated by how close it sits to *its own* level in that profile. Per bin
+matters: a picture's background is not flat, and a single global threshold eats
+quiet high frequencies while leaving low rumble alone.
+
+The marked stretch is drawn as a dashed amber band, separate from the blue
+preview selection, so the two can sit in different places. It is measured from
+the whole cropped image, so the noise patch does not have to be inside the
+region you are previewing.
+
+**Sensitivity** sets how far above the profile a bin must sit to count as
+signal - above 1 cuts harder and risks eating quiet detail. **Frequency
+smoothing** averages the amount of cut across neighbouring bins, which
+suppresses the isolated warbling tones that spectral subtraction leaves behind.
 
 It runs on the magnitudes *before* phase reconstruction, so Griffin-Lim never
 has to invent phase for hiss - which is where much of the watery quality comes
 from.
+
+Measured against ground truth - clean audio plus a known noise, drawn as a
+spectrogram and read back - the error against the clean signal falls about 4x
+at 24 dB while the signal peak is untouched:
+
+| Noise | off | 6 dB | 12 dB | 24 dB | peak kept |
+|---|---|---|---|---|---|
+| -60 dBFS | 0.0208 | 0.0123 | 0.0082 | 0.0052 | 100.1% |
+| -50 dBFS | 0.0656 | 0.0386 | 0.0253 | 0.0156 | 100.5% |
+| -40 dBFS | 0.2087 | 0.1225 | 0.0796 | 0.0478 | 101.4% |
+
+Three things to know, all inherent to the method rather than faults:
+
+- **A digitally silent patch does nothing.** If what you mark is pure black
+  there is no floor to subtract, and the result is an exact no-op. Mark a patch
+  that visibly has faint texture in it.
+- **Never mark a patch containing signal.** The profile absorbs it and then
+  subtracts it everywhere; in testing the peak fell to 7.9%.
+- **There is no time smoothing.** Gain is smoothed across frequency but not
+  across frames, so it wobbles roughly 8x more frame-to-frame than
+  bin-to-bin. That is where residual warble comes from.
+
+The floor used to be guessed as a low percentile over time. That assumed the
+noise was steady and that most of any given bin was silence, which is wrong for
+music, and it is why the guessed version disappointed.
 
 ### Preview region
 
